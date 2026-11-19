@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Database & Local State
+*.db
+*.sqlite
+*.sqlite3
+backend/aml_dss.db*
+
+# Large Data & Checkpoints (keep registry JSON & .gitkeep)
+data/processed/*.pt
+data/uploads/*.pt
+models/*.pt
+!models/.gitkeep
+!data/**/.gitkeep
+
+# Frontend / Node
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.env

@@ -1,0 +1,180 @@
+{
+  "default_model_id": "hybrid_v3_best",
+  "evaluation_protocol": {
+    "seeds": [42, 43, 44],
+    "hits_k": 10,
+    "hits_num_neg_candidates": 50,
+    "hits_tie_breaker": "conservative",
+    "threshold_grid_points": 199
+  },
+  "models": [
+    {
+      "model_id": "hybrid_v3_best",
+      "display_name": "Hybrid GATv2 + GINE (v3 — Khuyên dùng)",
+      "model_family": "HETERO_HYBRID",
+      "architecture_summary": "Parallel Gated GATv2 + GINE, Relation Softmax, 20d Structure-Gated Head",
+      "checkpoint_path": "models/best_hybrid_gat_gin_v3_seed42.pt",
+      "params": 389388,
+      "default_threshold": 0.5000,
+      "supports_attention": true,
+      "is_recommended": true,
+      "metrics_overall": {
+        "roc_auc": "0.8311 ± 0.0007",
+        "ap": "0.8447 ± 0.0014",
+        "f1": "0.7403 ± 0.0044",
+        "hits_at_10": "0.6828 ± 0.0003",
+        "roc_auc_mean": 0.8311,
+        "ap_mean": 0.8447,
+        "f1_mean": 0.7403,
+        "hits_at_10_mean": 0.6828
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.6773, "ap": 0.8873, "fpr_at_tau": 0.5257 },
+        "scenario_2_aml_clean": { "roc_auc": 0.8458, "ap": 0.9752, "fpr_at_tau": 0.1758 },
+        "scenario_3_suspected": { "roc_auc": 0.9629, "ap": 0.9941, "fpr_at_tau": 0.0182 },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.9559, "ap": 0.9991, "fpr_at_tau": 0.0208 },
+        "scenario_5_clean_clean": { "roc_auc": 0.8883, "ap": 0.9587, "fpr_at_tau": 0.1128 }
+      }
+    },
+    {
+      "model_id": "hybrid_v4_full",
+      "display_name": "Hybrid Tri-Modal (v4 — 24d Full-Graph CPU)",
+      "model_family": "HETERO_HYBRID",
+      "architecture_summary": "Root-Anchored GATv2 || SAGE || GINE, 82d Node + 24d Full-Graph Pairwise",
+      "checkpoint_path": "models/best_hybrid_gat_gin_v4_seed42.pt",
+      "params": 476103,
+      "default_threshold": 0.5682,
+      "supports_attention": true,
+      "is_recommended": false,
+      "metrics_overall": {
+        "roc_auc": "0.8312 ± 0.0031",
+        "ap": "0.8454 ± 0.0034",
+        "f1": "0.7334 ± 0.0031",
+        "hits_at_10": "0.6965 ± 0.0056",
+        "roc_auc_mean": 0.8312,
+        "ap_mean": 0.8454,
+        "f1_mean": 0.7334,
+        "hits_at_10_mean": 0.6965
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.6853, "ap": 0.8891, "fpr_at_tau": 0.4652 },
+        "scenario_2_aml_clean": { "roc_auc": 0.8512, "ap": 0.9757, "fpr_at_tau": 0.0938 },
+        "scenario_3_suspected": { "roc_auc": 0.9611, "ap": 0.9938, "fpr_at_tau": 0.0052 },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.9488, "ap": 0.9989, "fpr_at_tau": 0.0521 },
+        "scenario_5_clean_clean": { "roc_auc": 0.8814, "ap": 0.9574, "fpr_at_tau": 0.0337 }
+      }
+    },
+    {
+      "model_id": "hetero_gat_v4",
+      "display_name": "HeteroGAT-Only (2x Root-Anchored GATv2)",
+      "model_family": "HETERO_GAT",
+      "architecture_summary": "2-Layer Root-Anchored GATv2Conv + 82d Node + 24d Full-Graph Pairwise",
+      "checkpoint_path": "models/ablation_b_v4_seed42.pt",
+      "params": 333676,
+      "default_threshold": 0.5100,
+      "supports_attention": true,
+      "is_recommended": false,
+      "metrics_overall": {
+        "roc_auc": "0.8346 ± 0.0032",
+        "ap": "0.8485 ± 0.0041",
+        "f1": "0.7468 ± 0.0120",
+        "hits_at_10": "0.7014 ± 0.0158",
+        "roc_auc_mean": 0.8346,
+        "ap_mean": 0.8485,
+        "f1_mean": 0.7468,
+        "hits_at_10_mean": 0.7014
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.6957, "ap": null, "fpr_at_tau": 0.4932 },
+        "scenario_2_aml_clean": { "roc_auc": null, "ap": null, "fpr_at_tau": null },
+        "scenario_3_suspected": { "roc_auc": null, "ap": null, "fpr_at_tau": null },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.9627, "ap": null, "fpr_at_tau": 0.0208 },
+        "scenario_5_clean_clean": { "roc_auc": null, "ap": null, "fpr_at_tau": null }
+      }
+    },
+    {
+      "model_id": "hetero_sage_v4",
+      "display_name": "HeteroSAGE (2L + 24d Full-Graph)",
+      "model_family": "HETERO_SAGE",
+      "architecture_summary": "2-Layer HeteroConv(SAGEConv) + 82d Node + 24d Full-Graph Pairwise",
+      "checkpoint_path": "models/ablation_a_v4_seed42.pt",
+      "params": 345506,
+      "default_threshold": 0.4900,
+      "supports_attention": false,
+      "is_recommended": false,
+      "metrics_overall": {
+        "roc_auc": "0.8358 ± 0.0037",
+        "ap": "0.8513 ± 0.0022",
+        "f1": "0.7400 ± 0.0075",
+        "hits_at_10": "0.7059 ± 0.0108",
+        "roc_auc_mean": 0.8358,
+        "ap_mean": 0.8513,
+        "f1_mean": 0.7400,
+        "hits_at_10_mean": 0.7059
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.7045, "ap": null, "fpr_at_tau": 0.4360 },
+        "scenario_2_aml_clean": { "roc_auc": null, "ap": null, "fpr_at_tau": null },
+        "scenario_3_suspected": { "roc_auc": null, "ap": null, "fpr_at_tau": null },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.9409, "ap": null, "fpr_at_tau": 0.0729 },
+        "scenario_5_clean_clean": { "roc_auc": null, "ap": null, "fpr_at_tau": null }
+      }
+    },
+    {
+      "model_id": "ck_gcn_seed42",
+      "display_name": "CK Baseline — GCN Thuần (Homo + PE)",
+      "model_family": "HOMO_GCN",
+      "architecture_summary": "2-Layer Homogeneous GCN + 60d Customer Features + Skip",
+      "checkpoint_path": "models/gcn_seed42.pt",
+      "params": 26881,
+      "default_threshold": 0.3227,
+      "supports_attention": false,
+      "is_recommended": false,
+      "metrics_overall": {
+        "roc_auc": "0.8113 ± 0.0050",
+        "ap": "0.7976 ± 0.0080",
+        "f1": "0.7558 ± 0.0038",
+        "hits_at_10": "0.6704 ± 0.0095",
+        "roc_auc_mean": 0.8113,
+        "ap_mean": 0.7976,
+        "f1_mean": 0.7558,
+        "hits_at_10_mean": 0.6704
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.6020, "ap": 0.8386, "fpr_at_tau": null },
+        "scenario_2_aml_clean": { "roc_auc": 0.8493, "ap": 0.9761, "fpr_at_tau": null },
+        "scenario_3_suspected": { "roc_auc": 0.9206, "ap": 0.9875, "fpr_at_tau": null },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.8306, "ap": 0.9930, "fpr_at_tau": null },
+        "scenario_5_clean_clean": { "roc_auc": 0.9170, "ap": 0.9709, "fpr_at_tau": null }
+      }
+    },
+    {
+      "model_id": "ck_gat_seed42",
+      "display_name": "CK Baseline — GAT Thuần (Homo + PE)",
+      "model_family": "HOMO_GAT",
+      "architecture_summary": "2-Layer Homogeneous GAT (4 heads) + 60d Customer Features + Skip",
+      "checkpoint_path": "models/gat_seed42.pt",
+      "params": 39809,
+      "default_threshold": 0.4455,
+      "supports_attention": true,
+      "is_recommended": false,
+      "metrics_overall": {
+        "roc_auc": "0.8000 ± 0.0005",
+        "ap": "0.7918 ± 0.0049",
+        "f1": "0.7383 ± 0.0043",
+        "hits_at_10": "0.6477 ± 0.0039",
+        "roc_auc_mean": 0.8000,
+        "ap_mean": 0.7918,
+        "f1_mean": 0.7383,
+        "hits_at_10_mean": 0.6477
+      },
+      "metrics_scenarios": {
+        "scenario_1_aml_aml": { "roc_auc": 0.5934, "ap": 0.8367, "fpr_at_tau": null },
+        "scenario_2_aml_clean": { "roc_auc": 0.8314, "ap": 0.9731, "fpr_at_tau": null },
+        "scenario_3_suspected": { "roc_auc": 0.9152, "ap": 0.9869, "fpr_at_tau": null },
+        "scenario_4_shared_ip_dev": { "roc_auc": 0.8125, "ap": 0.9931, "fpr_at_tau": null },
+        "scenario_5_clean_clean": { "roc_auc": 0.9041, "ap": 0.9660, "fpr_at_tau": null }
+      }
+    }
+  ]
+}

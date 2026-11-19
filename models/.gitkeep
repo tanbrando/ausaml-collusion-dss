@@ -1,0 +1,2 @@
+# Placeholder to keep models/ directory in Git.
+# Place trained .pt checkpoints and frozen_scalers.pt here.
