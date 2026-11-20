@@ -48,17 +48,11 @@ function WorkspaceContent() {
 
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
-<<<<<<< HEAD
   const [selectedCaseId, setSelectedCaseId] = useState(
     caseIdFromQuery || "case_01_smurfing_ring"
   );
-  const [selectedModelId, setSelectedModelId] = useState("hybrid_v3_best");
-  const [threshold, setThreshold] = useState(0.5);
-=======
-  const [selectedCaseId, setSelectedCaseId] = useState("case_01_smurfing_ring");
   const [selectedModelId, setSelectedModelId] = useState("hybrid_v4_full");
   const [threshold, setThreshold] = useState(0.5682);
->>>>>>> bd89333e0c76175124a2aa35be6e016a20b94829
   const [topK, setTopK] = useState(20);
   const [hopDepth, setHopDepth] = useState(2);
   const [includeNodeTypes, setIncludeNodeTypes] =
