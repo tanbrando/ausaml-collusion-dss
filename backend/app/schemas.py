@@ -154,7 +154,7 @@ class CaseUploadResponse(BaseModel):
 # 3. INFERENCE, EXPLAINABILITY & CYTOSCAPE PAYLOAD SCHEMAS
 # ==============================================================================
 class PredictRequest(BaseModel):
-    model_id: str = "hybrid_v3_best"
+    model_id: str = "hybrid_v4_full"
     target_customer_ids: List[str] = Field(default_factory=list)
     inference_mode: InferenceMode = InferenceMode.SUBGRAPH
     hop_depth: int = Field(default=2, ge=1, le=3)
@@ -277,7 +277,7 @@ class PredictResponse(BaseModel):
 class ExplainPairRequest(BaseModel):
     source: str
     target: str
-    model_id: str = "hybrid_v3_best"
+    model_id: str = "hybrid_v4_full"
 
 
 class ExplainPairResponse(BaseModel):

@@ -29,8 +29,8 @@ export default function WorkspacePage() {
   const [cases, setCases] = useState<CaseSummary[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedCaseId, setSelectedCaseId] = useState("case_01_smurfing_ring");
-  const [selectedModelId, setSelectedModelId] = useState("hybrid_v3_best");
-  const [threshold, setThreshold] = useState(0.5);
+  const [selectedModelId, setSelectedModelId] = useState("hybrid_v4_full");
+  const [threshold, setThreshold] = useState(0.5682);
   const [topK, setTopK] = useState(20);
   const [includeNodeTypes, setIncludeNodeTypes] = useState<NodeType[]>([
     "customer",

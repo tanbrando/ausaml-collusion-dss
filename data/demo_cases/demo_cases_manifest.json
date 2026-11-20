@@ -1,0 +1,89 @@
+{
+  "cases": [
+    {
+      "case_id": "case_01_smurfing_ring",
+      "graph_file_path": "data/demo_cases/case_01_smurfing_ring.pt",
+      "num_customers": 90,
+      "total_nodes": 3698,
+      "total_edges": 4258,
+      "sample_customer_ids": [
+        "CUST_38168",
+        "CUST_42279",
+        "CUST_05389",
+        "CUST_17983",
+        "CUST_01928",
+        "CUST_30423",
+        "CUST_27914",
+        "CUST_31034"
+      ]
+    },
+    {
+      "case_id": "case_02_shared_device_mule",
+      "graph_file_path": "data/demo_cases/case_02_shared_device_mule.pt",
+      "num_customers": 100,
+      "total_nodes": 3980,
+      "total_edges": 4631,
+      "sample_customer_ids": [
+        "CUST_11668",
+        "CUST_45879",
+        "CUST_32996",
+        "CUST_44103",
+        "CUST_41291",
+        "CUST_15023",
+        "CUST_26540",
+        "CUST_08917"
+      ]
+    },
+    {
+      "case_id": "case_03_hard_neg_type1_trap",
+      "graph_file_path": "data/demo_cases/case_03_hard_neg_type1_trap.pt",
+      "num_customers": 80,
+      "total_nodes": 3671,
+      "total_edges": 4169,
+      "sample_customer_ids": [
+        "CUST_04886",
+        "CUST_49963",
+        "CUST_15212",
+        "CUST_20830",
+        "CUST_16041",
+        "CUST_17362",
+        "CUST_14770",
+        "CUST_37447"
+      ]
+    },
+    {
+      "case_id": "case_04_hard_neg_type4_trap",
+      "graph_file_path": "data/demo_cases/case_04_hard_neg_type4_trap.pt",
+      "num_customers": 80,
+      "total_nodes": 3140,
+      "total_edges": 3570,
+      "sample_customer_ids": [
+        "CUST_31827",
+        "CUST_46979",
+        "CUST_32405",
+        "CUST_37767",
+        "CUST_05684",
+        "CUST_12409",
+        "CUST_05557",
+        "CUST_49935"
+      ]
+    },
+    {
+      "case_id": "case_05_test_benchmark_3420",
+      "graph_file_path": "data/demo_cases/case_05_test_benchmark_3420.pt",
+      "num_customers": 2150,
+      "total_nodes": 63403,
+      "total_edges": 79727,
+      "sample_customer_ids": [
+        "CUST_00007",
+        "CUST_00014",
+        "CUST_00078",
+        "CUST_00082",
+        "CUST_00105",
+        "CUST_00112",
+        "CUST_00120",
+        "CUST_00128"
+      ]
+    }
+  ]
+}

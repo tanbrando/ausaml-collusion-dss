@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from .config import DATABASE_URL
+from .config import DATABASE_URL, DEMO_MANIFEST_PATH
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
@@ -86,13 +86,24 @@ BUILTIN_DEMO_CASES = [
 
 
 def init_db_and_seed() -> None:
-    """Tạo bảng và khởi tạo sẵn 5 Built-in Demo Cases nếu DB còn trống."""
+    """Tạo bảng và khởi tạo/đồng bộ sẵn 5 Built-in Demo Cases (từ manifest thật nếu có)."""
     from .models_db import CaseRecord
+
+    manifest_by_id = {}
+    if DEMO_MANIFEST_PATH.exists():
+        try:
+            with open(DEMO_MANIFEST_PATH, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+            for m in manifest_data.get("cases", []):
+                manifest_by_id[m["case_id"]] = m
+        except Exception:
+            manifest_by_id = {}
 
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        for item in BUILTIN_DEMO_CASES:
+        for base_item in BUILTIN_DEMO_CASES:
+            item = {**base_item, **manifest_by_id.get(base_item["case_id"], {})}
             exists = db.query(CaseRecord).filter(CaseRecord.case_id == item["case_id"]).first()
             if not exists:
                 db.add(
@@ -110,6 +121,12 @@ def init_db_and_seed() -> None:
                         created_at=datetime.now(timezone.utc),
                     )
                 )
+            elif base_item["case_id"] in manifest_by_id:
+                exists.num_customers = item["num_customers"]
+                exists.total_nodes = item["total_nodes"]
+                exists.total_edges = item["total_edges"]
+                exists.sample_customer_ids_json = json.dumps(item["sample_customer_ids"])
+                exists.graph_file_path = item["graph_file_path"]
         db.commit()
     finally:
         db.close()
