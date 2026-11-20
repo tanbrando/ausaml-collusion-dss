@@ -298,6 +298,7 @@ function WorkspaceContent() {
           <CytoscapeCanvas
             graphPayload={predResult?.graph_payload ?? null}
             threshold={threshold}
+            includeNodeTypes={includeNodeTypes}
             highlightedPath={highlightedPath}
             onSelectPredictedEdge={(pairId) => {
               const found = predResult?.predictions.find(
@@ -305,6 +306,7 @@ function WorkspaceContent() {
               );
               if (found) handleSelectPair(found);
             }}
+            onClearHighlight={() => setHighlightedPath(null)}
           />
           <RankingTable
             predictions={predResult?.predictions ?? []}
