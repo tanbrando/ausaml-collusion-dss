@@ -101,7 +101,7 @@ export function fetchBenchmarks(): Promise<BenchmarkSummaryResponse> {
 export function getExportUrl(
   caseId: string,
   format: "csv" | "json" = "csv",
-  modelId = "hybrid_v3_best"
+  modelId = "hybrid_v4_full"
 ): string {
   return `${API_BASE}/api/v1/cases/${encodeURIComponent(caseId)}/export?format=${format}&model_id=${encodeURIComponent(modelId)}`;
 }

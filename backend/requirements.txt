@@ -9,5 +9,5 @@ numpy>=1.26.0
 scipy>=1.13.0
 networkx>=3.2
 torch>=2.2.0
-# Optional for M1 Real Hetero Engine (install on GPU/full env):
-# torch_geometric>=2.5.0
+torch_geometric>=2.5.0
+scikit-learn>=1.4.0

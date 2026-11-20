@@ -93,11 +93,20 @@ def get_all_audit_logs(case_id: str = Query(default=None), db: Session = Depends
     return AuditTrailResponse(feedbacks=fbs, audit_logs=logs)
 
 
+@router.get("/cases/{case_id}/audit", response_model=AuditTrailResponse)
+def get_case_audit_logs(case_id: str, db: Session = Depends(get_db)):
+    """Route alias chuẩn API Contract: lấy lịch sử phản hồi & audit logs của riêng 1 vụ án."""
+    case_row = db.query(CaseRecord).filter(CaseRecord.case_id == case_id).first()
+    if not case_row:
+        raise HTTPException(status_code=404, detail=f"Không tìm thấy vụ án '{case_id}'.")
+    return get_all_audit_logs(case_id=case_id, db=db)
+
+
 @router.get("/cases/{case_id}/export")
 def export_case_report(
     case_id: str,
     format: str = Query(default="csv", pattern="^(csv|json)$"),
-    model_id: str = Query(default="hybrid_v3_best"),
+    model_id: str = Query(default="hybrid_v4_full"),
     db: Session = Depends(get_db),
 ):
     """Xuất hồ sơ điều tra kèm bằng chứng và trạng thái xác nhận ra CSV hoặc JSON."""
@@ -112,7 +121,15 @@ def export_case_report(
         )
         for r in fb_rows
     }
-    pred = model_registry.predict(case_id, PredictRequest(model_id=model_id), feedback_map=fb_map)
+    try:
+        pred = model_registry.predict(
+            case_id,
+            PredictRequest(model_id=model_id),
+            feedback_map=fb_map,
+            graph_file_path=case_row.graph_file_path,
+        )
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
     db.add(AuditLog(case_id=case_id, event_type="EXPORT", payload_json=json.dumps({"format": format, "model_id": model_id})))
     db.commit()

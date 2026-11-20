@@ -8,8 +8,8 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=sqlite:///./aml_dss.db
-      - USE_MOCK_ENGINE=true
-      - DEFAULT_MODEL_ID=hybrid_v3_best
+      - USE_MOCK_ENGINE=false
+      - DEFAULT_MODEL_ID=hybrid_v4_full
       - CORS_ORIGINS=http://localhost:3000
     volumes:
       - ./backend:/app
