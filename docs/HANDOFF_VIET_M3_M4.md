@@ -1,7 +1,16 @@
 # 📋 TÀI LIỆU BÀN GIAO CÔNG VIỆC FRONTEND — CHO VIỆT (Module 3 & Module 4)
 
-Chào **Việt**, đây là tài liệu bàn giao toàn bộ phần **Frontend (Next.js + TypeScript + Cytoscape.js + Recharts)** cho dự án **`ausaml-collusion-dss`**.  
-Toàn bộ hệ thống đã được khóa cứng theo Contract tại [API_AND_DATA_CONTRACT.md](API_AND_DATA_CONTRACT.md) và Backend Mock Server đã chạy sẵn toàn bộ 8 API Endpoints để bạn **làm UI song song ngay lập tức mà không cần đợi Tấn xong PyTorch Engine**.
+Chào **Việt**, đây là tài liệu bàn giao toàn bộ phần **Frontend (Next.js + TypeScript + Cytoscape.js + Recharts)** cho dự án **`ausaml-collusion-dss`**.
+
+> **🔔 CẬP NHẬT BÀN GIAO TỪ TẤN (M1 & M2 ĐÃ HOÀN TẤT 100% — REAL PYTORCH ENGINE SẴN SÀNG):**
+> - Toàn bộ **Backend FastAPI + Real PyTorch GNN Engine + 5 Checkpoints (`models/*.pt`) + 5 Demo Cases thật (`data/demo_cases/*.pt`)** đã được tích hợp sẵn trong repo (chỉ cần `git pull` là có đủ file, không cần tải thêm từ Kaggle!).
+> - **Mô hình mặc định chính thức:** `hybrid_v4_full` (**Hybrid Tri-Modal GATv2 + GINE + SAGE v4**, ngưỡng mặc định $\tau_{\text{val}} = 0.5682$). Hệ thống giữ **5 mô hình chuẩn** (`hybrid_v4_full`, `hetero_gat_v4`, `hetero_sage_v4`, `ck_gcn_seed42`, `ck_gat_seed42`; đã loại bỏ `v3` nhưng vẫn giữ alias ngược `hybrid_v3_best -> hybrid_v4_full` và giữ nguyên 100% tên trường trong `contract.ts` để không làm lỗi TypeScript).
+> - **Tốc độ suy luận thật trên CPU:** `< 100 ms` cho `case_01_smurfing_ring` (kèm đối chứng 3 model `GCN / GAT / Hybrid v4` và Top-3 Bridge Paths), khởi động `warmup` chỉ `~300 ms`.
+> - **Hard Negative Showcase (`/api/v1/benchmarks/summary`)** đã trả về các cặp bẫy Type 1 & Type 4 **thật** tính trực tiếp từ `case_03` & `case_04`.
+> - **Cách bật Backend cho Việt:**
+>   1. Tạo `.env` từ `.env.example` (`USE_MOCK_ENGINE=false` để chạy AI thật, hoặc `true` nếu muốn chạy Mock).
+>   2. Trong `backend/`: tạo venv, `pip install -r requirements.txt`, chạy `uvicorn app.main:app --reload --port 8000` (hoặc chạy `docker-compose up --build`).
+>   3. Mở Swagger UI `http://localhost:8000/docs` kiểm tra `/health` (`"use_mock_engine": false`) và `/api/v1/cases`.
 
 ---
 

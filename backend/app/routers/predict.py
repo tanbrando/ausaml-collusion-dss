@@ -43,8 +43,15 @@ def predict_case_links(case_id: str, req: PredictRequest, db: Session = Depends(
 
     try:
         fb_map = _load_feedback_status_map(db, case_id)
-        res = model_registry.predict(case_id, req, feedback_map=fb_map)
+        res = model_registry.predict(
+            case_id,
+            req,
+            feedback_map=fb_map,
+            graph_file_path=case_row.graph_file_path,
+        )
     except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
     db.add(
@@ -84,6 +91,13 @@ def explain_candidate_pair(case_id: str, req: ExplainPairRequest, db: Session = 
 
     try:
         fb_map = _load_feedback_status_map(db, case_id)
-        return model_registry.explain_pair(case_id, req, feedback_map=fb_map)
+        return model_registry.explain_pair(
+            case_id,
+            req,
+            feedback_map=fb_map,
+            graph_file_path=case_row.graph_file_path,
+        )
     except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

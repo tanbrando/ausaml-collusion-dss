@@ -4,8 +4,6 @@ Chạy trực tiếp: `pytest backend/tests/test_contract_and_feedback.py`
 """
 
 import io
-import os
-import tempfile
 import torch
 from fastapi.testclient import TestClient
 
@@ -25,8 +23,8 @@ def test_health_models_cases_benchmarks():
     r_models = client.get("/api/v1/models")
     assert r_models.status_code == 200
     m_data = r_models.json()
-    assert m_data["default_model_id"] == "hybrid_v3_best"
-    assert len(m_data["models"]) == 6
+    assert m_data["default_model_id"] == "hybrid_v4_full"
+    assert len(m_data["models"]) == 5
 
     r_cases = client.get("/api/v1/cases")
     assert r_cases.status_code == 200
@@ -42,8 +40,8 @@ def test_predict_explain_feedback_and_export_lifecycle():
     r_pred = client.post(
         f"/api/v1/cases/{case_id}/predict",
         json={
-            "model_id": "hybrid_v3_best",
-            "target_customer_ids": ["CUST_10492", "CUST_48210"],
+            "model_id": "hybrid_v4_full",
+            "target_customer_ids": [],
             "inference_mode": "subgraph",
             "hop_depth": 2,
             "top_k": 10,
@@ -51,18 +49,19 @@ def test_predict_explain_feedback_and_export_lifecycle():
     )
     assert r_pred.status_code == 200
     pred_data = r_pred.json()
-    assert pred_data["model_used"]["applied_threshold"] == 0.5000
+    assert pred_data["model_used"]["applied_threshold"] == 0.5682
     assert len(pred_data["predictions"]) > 0
     first = pred_data["predictions"][0]
     assert "pairwise_summary" in first
 
-    # Explain pair
+    # Explain pair — kiểm tra điểm số nhất quán 100% với /predict
     r_exp = client.post(
         f"/api/v1/cases/{case_id}/explain-pair",
-        json={"source": first["source"], "target": first["target"], "model_id": "hybrid_v3_best"},
+        json={"source": first["source"], "target": first["target"], "model_id": "hybrid_v4_full"},
     )
     assert r_exp.status_code == 200
     assert len(r_exp.json()["radar_features"]) == 6
+    assert r_exp.json()["score"] == first["score"]
 
     # Submit CONFIRM feedback
     r_fb = client.post(
@@ -71,7 +70,7 @@ def test_predict_explain_feedback_and_export_lifecycle():
             "pair_id": first["pair_id"],
             "source": first["source"],
             "target": first["target"],
-            "model_id": "hybrid_v3_best",
+            "model_id": "hybrid_v4_full",
             "predicted_score": first["score"],
             "action": "CONFIRM",
             "note": "Verified shared device DEV_0992",
@@ -84,16 +83,20 @@ def test_predict_explain_feedback_and_export_lifecycle():
     # Re-predict should reflect CONFIRMED status on both predictions & graph_payload
     r_pred2 = client.post(
         f"/api/v1/cases/{case_id}/predict",
-        json={"model_id": "hybrid_v3_best", "target_customer_ids": [first["source"], first["target"]]},
+        json={"model_id": "hybrid_v4_full", "target_customer_ids": [first["source"], first["target"]]},
     )
     assert r_pred2.status_code == 200
     updated_first = [p for p in r_pred2.json()["predictions"] if p["pair_id"] == first["pair_id"]][0]
     assert updated_first["feedback_status"] == "CONFIRMED"
 
-    # Audit & Export CSV/JSON
+    # Audit (cả /api/v1/audit và route alias /api/v1/cases/{case_id}/audit) & Export CSV/JSON
     r_audit = client.get(f"/api/v1/audit?case_id={case_id}")
     assert r_audit.status_code == 200
     assert len(r_audit.json()["feedbacks"]) >= 1
+
+    r_audit_alias = client.get(f"/api/v1/cases/{case_id}/audit")
+    assert r_audit_alias.status_code == 200
+    assert len(r_audit_alias.json()["feedbacks"]) >= 1
 
     r_csv = client.get(f"/api/v1/cases/{case_id}/export?format=csv")
     assert r_csv.status_code == 200
@@ -101,7 +104,6 @@ def test_predict_explain_feedback_and_export_lifecycle():
 
 
 def test_upload_gate_check_1_validation():
-    # Build valid minimal AusAML .pt dict
     valid_graph = {
         "node_features": {
             "customer": torch.randn(10, 10),

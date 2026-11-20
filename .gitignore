@@ -13,11 +13,17 @@ env/
 *.sqlite3
 backend/aml_dss.db*
 
-# Large Data & Checkpoints (keep registry JSON & .gitkeep)
+# Large Data & Checkpoints (allow-list 6 lightweight v4+CK artifacts ~5.2MB for instant git pull)
 data/processed/*.pt
 data/uploads/*.pt
 models/*.pt
 !models/.gitkeep
+!models/gcn_seed42.pt
+!models/gat_seed42.pt
+!models/best_hybrid_gat_gin_v4_seed42.pt
+!models/ablation_a_v4_seed42.pt
+!models/ablation_b_v4_seed42.pt
+!models/frozen_scalers.pt
 !data/**/.gitkeep
 
 # Frontend / Node

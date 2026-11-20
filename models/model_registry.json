@@ -1,5 +1,5 @@
 {
-  "default_model_id": "hybrid_v3_best",
+  "default_model_id": "hybrid_v4_full",
   "evaluation_protocol": {
     "seeds": [42, 43, 44],
     "hits_k": 10,
@@ -9,43 +9,15 @@
   },
   "models": [
     {
-      "model_id": "hybrid_v3_best",
-      "display_name": "Hybrid GATv2 + GINE (v3 — Khuyên dùng)",
-      "model_family": "HETERO_HYBRID",
-      "architecture_summary": "Parallel Gated GATv2 + GINE, Relation Softmax, 20d Structure-Gated Head",
-      "checkpoint_path": "models/best_hybrid_gat_gin_v3_seed42.pt",
-      "params": 389388,
-      "default_threshold": 0.5000,
-      "supports_attention": true,
-      "is_recommended": true,
-      "metrics_overall": {
-        "roc_auc": "0.8311 ± 0.0007",
-        "ap": "0.8447 ± 0.0014",
-        "f1": "0.7403 ± 0.0044",
-        "hits_at_10": "0.6828 ± 0.0003",
-        "roc_auc_mean": 0.8311,
-        "ap_mean": 0.8447,
-        "f1_mean": 0.7403,
-        "hits_at_10_mean": 0.6828
-      },
-      "metrics_scenarios": {
-        "scenario_1_aml_aml": { "roc_auc": 0.6773, "ap": 0.8873, "fpr_at_tau": 0.5257 },
-        "scenario_2_aml_clean": { "roc_auc": 0.8458, "ap": 0.9752, "fpr_at_tau": 0.1758 },
-        "scenario_3_suspected": { "roc_auc": 0.9629, "ap": 0.9941, "fpr_at_tau": 0.0182 },
-        "scenario_4_shared_ip_dev": { "roc_auc": 0.9559, "ap": 0.9991, "fpr_at_tau": 0.0208 },
-        "scenario_5_clean_clean": { "roc_auc": 0.8883, "ap": 0.9587, "fpr_at_tau": 0.1128 }
-      }
-    },
-    {
       "model_id": "hybrid_v4_full",
-      "display_name": "Hybrid Tri-Modal (v4 — 24d Full-Graph CPU)",
+      "display_name": "Hybrid Tri-Modal GATv2 + GINE + SAGE (v4 — Khuyên dùng)",
       "model_family": "HETERO_HYBRID",
-      "architecture_summary": "Root-Anchored GATv2 || SAGE || GINE, 82d Node + 24d Full-Graph Pairwise",
+      "architecture_summary": "Root-Anchored GATv2 || SAGE || GINE (Tri-Router), 82d Node + 24d Full-Graph Pairwise",
       "checkpoint_path": "models/best_hybrid_gat_gin_v4_seed42.pt",
       "params": 476103,
       "default_threshold": 0.5682,
       "supports_attention": true,
-      "is_recommended": false,
+      "is_recommended": true,
       "metrics_overall": {
         "roc_auc": "0.8312 ± 0.0031",
         "ap": "0.8454 ± 0.0034",
