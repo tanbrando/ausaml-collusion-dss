@@ -60,6 +60,7 @@ function WorkspaceContent() {
 
   const [isLoadingMeta, setIsLoadingMeta] = useState(true);
   const [isPredicting, setIsPredicting] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [predResult, setPredResult] = useState<PredictResponse | null>(null);
@@ -132,6 +133,7 @@ function WorkspaceContent() {
   ) => {
     setSelectedPair(item);
     setHighlightedPath(item.evidence_paths[0] ?? null);
+    setIsLoadingDetail(true);
     try {
       const detail = await explainPair(caseIdOverride ?? selectedCaseId, {
         source: item.source,
@@ -145,10 +147,12 @@ function WorkspaceContent() {
           ? err.message
           : "Không thể tải chi tiết giải thích cặp nghi vấn."
       );
+    } finally {
+      setIsLoadingDetail(false);
     }
   };
 
-  const handleRunPredict = async () => {
+  const handleRunPredict = async (preservePairId?: string) => {
     if (!selectedCaseId) return;
     setIsPredicting(true);
     setErrorMsg(null);
@@ -164,9 +168,15 @@ function WorkspaceContent() {
       });
       setPredResult(res);
 
-      const firstPair = res.predictions[0] ?? null;
-      if (firstPair) {
-        await handleSelectPair(firstPair, selectedCaseId, selectedModelId);
+      const targetPair =
+        (preservePairId
+          ? res.predictions.find((p) => p.pair_id === preservePairId)
+          : null) ??
+        res.predictions[0] ??
+        null;
+
+      if (targetPair) {
+        await handleSelectPair(targetPair, selectedCaseId, selectedModelId);
       } else {
         setSelectedPair(null);
         setPairDetail(null);
@@ -186,6 +196,7 @@ function WorkspaceContent() {
   const handleFeedback = async (action: FeedbackAction, note: string) => {
     if (!selectedPair) return;
     setErrorMsg(null);
+    const currentPairId = selectedPair.pair_id;
     try {
       await submitFeedback(selectedCaseId, {
         pair_id: selectedPair.pair_id,
@@ -197,7 +208,7 @@ function WorkspaceContent() {
         note,
         reviewer_name: "Investigator_Viet",
       });
-      await handleRunPredict();
+      await handleRunPredict(currentPairId);
     } catch (err) {
       setErrorMsg(
         err instanceof Error
@@ -279,7 +290,7 @@ function WorkspaceContent() {
                 prev.includes(nt) ? prev.filter((x) => x !== nt) : [...prev, nt]
               )
             }
-            onRunPredict={handleRunPredict}
+            onRunPredict={() => handleRunPredict()}
           />
         </div>
 
@@ -306,6 +317,8 @@ function WorkspaceContent() {
           <EvidenceDrawer
             selectedPair={selectedPair}
             pairDetail={pairDetail}
+            highlightedPathId={highlightedPath?.path_id ?? null}
+            isLoadingDetail={isLoadingDetail}
             onHighlightPath={setHighlightedPath}
             onSubmitFeedback={handleFeedback}
           />
