@@ -1,20 +1,23 @@
 "use client";
 
 /**
- * MÀN HÌNH 2 (M3 - Việt + Refactored Full-Stack Integration): DSS Interactive Graph Workspace (/workspace)
- * Bố cục 3 cột chuẩn SRS Mục 8:
- * - Cột trái (~25%): InferenceSidebar
- * - Cột giữa (~45%): CytoscapeCanvas (trên) + RankingTable (dưới)
- * - Cột phải (~30%): EvidenceDrawer (Giải thích Bridge Paths, Radar & Human-in-the-Loop)
- *
- * Cải tiến tích hợp:
- * - Auto-run suy luận khi mở trang hoặc đổi Vụ án / Mô hình (chống ghi nhầm Feedback chéo vụ án).
- * - Đồng bộ realtime `threshold` slider trên cả CytoscapeCanvas, RankingTable, EvidenceDrawer & bộ đếm HIGH/MEDIUM.
+ * MÀN HÌNH 2 (M3 - Việt): DSS Interactive Graph Workspace (/workspace)
+ * Tinh chỉnh theo review lần 3 (f):
+ * - Cố định chiều cao toàn trang theo viewport trên màn hình desktop (`lg:h-[calc(100vh-88px)] lg:overflow-hidden`)
+ *   để bảng xếp hạng không đẩy trang xuống và khối Quyết định ở cột phải luôn nằm gọn trong màn hình.
+ * - Truyền `selectedPairEndpoints` vào `CytoscapeCanvas` để mặc định làm nổi bật cặp đang chọn.
  */
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useDeferredValue, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AlertCircle, CheckCircle2, Clock, Network, X } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Network,
+  Sparkles,
+  X,
+} from "lucide-react";
 import {
   explainPair,
   fetchCases,
@@ -22,7 +25,6 @@ import {
   runPrediction,
   submitFeedback,
 } from "@/lib/api";
-import { computeRiskLevel } from "@/types/contract";
 import type {
   CaseSummary,
   EvidencePath,
@@ -58,6 +60,8 @@ function WorkspaceContent() {
   );
   const [selectedModelId, setSelectedModelId] = useState("hybrid_v4_full");
   const [threshold, setThreshold] = useState(0.5682);
+  const deferredThreshold = useDeferredValue(threshold);
+
   const [topK, setTopK] = useState(20);
   const [hopDepth, setHopDepth] = useState(2);
   const [includeNodeTypes, setIncludeNodeTypes] =
@@ -67,6 +71,7 @@ function WorkspaceContent() {
   const [isPredicting, setIsPredicting] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const [predResult, setPredResult] = useState<PredictResponse | null>(null);
   const [selectedPair, setSelectedPair] = useState<PredictedLinkItem | null>(
@@ -78,96 +83,33 @@ function WorkspaceContent() {
   const [highlightedPath, setHighlightedPath] = useState<EvidencePath | null>(
     null
   );
+  const [focusPairEndpoints, setFocusPairEndpoints] = useState<{
+    source: string;
+    target: string;
+  } | null>(null);
 
-  // Guard chống race condition khi đổi Vụ án / Mô hình nhanh liên tiếp
-  const predictSeqRef = useRef(0);
-  const metaReadyRef = useRef(false);
-
-  const handleSelectPair = useCallback(
-    async (
-      item: PredictedLinkItem,
-      caseIdOverride?: string,
-      modelIdOverride?: string
-    ) => {
-      setSelectedPair(item);
-      setHighlightedPath(item.evidence_paths[0] ?? null);
-      setIsLoadingDetail(true);
-      try {
-        const detail = await explainPair(caseIdOverride ?? selectedCaseId, {
-          source: item.source,
-          target: item.target,
-          model_id: modelIdOverride ?? selectedModelId,
-        });
-        setPairDetail(detail);
-      } catch (err) {
-        setErrorMsg(
-          err instanceof Error
-            ? err.message
-            : "Không thể tải chi tiết giải thích cặp nghi vấn."
-        );
-      } finally {
-        setIsLoadingDetail(false);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setHighlightedPath(null);
+        setFocusPairEndpoints(null);
       }
-    },
-    [selectedCaseId, selectedModelId]
-  );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
-  const executePredict = useCallback(
-    async (opts: {
-      caseId: string;
-      modelId: string;
-      tau: number;
-      k: number;
-      depth: number;
-      nodeTypes: NodeType[];
-      preservePairId?: string;
-    }) => {
-      if (!opts.caseId) return;
-      const reqSeq = ++predictSeqRef.current;
-      setIsPredicting(true);
-      setErrorMsg(null);
-      try {
-        const res = await runPrediction(opts.caseId, {
-          model_id: opts.modelId,
-          target_customer_ids: [],
-          inference_mode: "subgraph",
-          hop_depth: opts.depth,
-          probability_threshold: opts.tau,
-          top_k: opts.k,
-          include_node_types: opts.nodeTypes,
-        });
-        if (reqSeq !== predictSeqRef.current) return;
-        setPredResult(res);
+  useEffect(() => {
+    if (!toastMsg) return;
+    const timer = window.setTimeout(() => setToastMsg(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [toastMsg]);
 
-        const targetPair =
-          (opts.preservePairId
-            ? res.predictions.find((p) => p.pair_id === opts.preservePairId)
-            : null) ??
-          res.predictions[0] ??
-          null;
-
-        if (targetPair) {
-          await handleSelectPair(targetPair, opts.caseId, opts.modelId);
-        } else {
-          setSelectedPair(null);
-          setPairDetail(null);
-          setHighlightedPath(null);
-        }
-      } catch (err) {
-        if (reqSeq !== predictSeqRef.current) return;
-        setErrorMsg(
-          err instanceof Error
-            ? err.message
-            : "Lỗi khi chạy suy luận GNN. Kiểm tra lại Backend Server."
-        );
-      } finally {
-        if (reqSeq === predictSeqRef.current) {
-          setIsPredicting(false);
-        }
-      }
-    },
-    [handleSelectPair]
-  );
+  useEffect(() => {
+    if (caseIdFromQuery) {
+      setSelectedCaseId(caseIdFromQuery);
+    }
+  }, [caseIdFromQuery]);
 
   useEffect(() => {
     let active = true;
@@ -178,30 +120,25 @@ function WorkspaceContent() {
       .then(([casesRes, modelsRes]) => {
         if (!active) return;
         setCases(casesRes.cases);
-        let initCaseId = caseIdFromQuery || "case_01_smurfing_ring";
         if (casesRes.cases.length > 0) {
-          const matched = casesRes.cases.find((c) => c.case_id === initCaseId);
-          initCaseId = matched ? matched.case_id : casesRes.cases[0].case_id;
-          setSelectedCaseId(initCaseId);
+          const targetCase = caseIdFromQuery
+            ? casesRes.cases.find((c) => c.case_id === caseIdFromQuery)
+            : null;
+          if (targetCase) {
+            setSelectedCaseId(targetCase.case_id);
+          } else if (
+            !casesRes.cases.some((c) => c.case_id === selectedCaseId)
+          ) {
+            setSelectedCaseId(casesRes.cases[0].case_id);
+          }
         }
 
         setModels(modelsRes.models);
-        const initModelId = modelsRes.default_model_id;
-        setSelectedModelId(initModelId);
-        const rec = modelsRes.models.find((m) => m.model_id === initModelId);
-        const initTau = rec ? rec.default_threshold : 0.5682;
-        setThreshold(initTau);
-        metaReadyRef.current = true;
-
-        // Tự động chạy suy luận ngay khi vào Phòng Điều Tra
-        void executePredict({
-          caseId: initCaseId,
-          modelId: initModelId,
-          tau: initTau,
-          k: topK,
-          depth: hopDepth,
-          nodeTypes: includeNodeTypes,
-        });
+        setSelectedModelId(modelsRes.default_model_id);
+        const rec = modelsRes.models.find(
+          (m) => m.model_id === modelsRes.default_model_id
+        );
+        if (rec) setThreshold(rec.default_threshold);
       })
       .catch((err) => {
         if (!active) return;
@@ -218,72 +155,97 @@ function WorkspaceContent() {
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseIdFromQuery]);
 
-  const handleCaseChange = (newCaseId: string) => {
-    setSelectedCaseId(newCaseId);
-    // Xóa ngay state cũ để không bao giờ ghi nhầm feedback sang vụ án mới
-    setPredResult(null);
-    setSelectedPair(null);
-    setPairDetail(null);
-    setHighlightedPath(null);
-    if (metaReadyRef.current) {
-      void executePredict({
-        caseId: newCaseId,
-        modelId: selectedModelId,
-        tau: threshold,
-        k: topK,
-        depth: hopDepth,
-        nodeTypes: includeNodeTypes,
+  const handleSelectPair = async (
+    item: PredictedLinkItem,
+    caseIdOverride?: string,
+    modelIdOverride?: string
+  ) => {
+    setSelectedPair(item);
+    setFocusPairEndpoints({ source: item.source, target: item.target });
+    setHighlightedPath(item.evidence_paths[0] ?? null);
+    setIsLoadingDetail(true);
+    try {
+      const detail = await explainPair(caseIdOverride ?? selectedCaseId, {
+        source: item.source,
+        target: item.target,
+        model_id: modelIdOverride ?? selectedModelId,
       });
+      setPairDetail(detail);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : "Không thể tải chi tiết giải thích cặp nghi vấn."
+      );
+    } finally {
+      setIsLoadingDetail(false);
     }
   };
 
-  const handleModelChange = (newModelId: string, defaultTau: number) => {
-    setSelectedModelId(newModelId);
-    setThreshold(defaultTau);
-    if (metaReadyRef.current) {
-      void executePredict({
-        caseId: selectedCaseId,
-        modelId: newModelId,
-        tau: defaultTau,
-        k: topK,
-        depth: hopDepth,
-        nodeTypes: includeNodeTypes,
+  const handleRunPredict = async (preservePairId?: string) => {
+    if (!selectedCaseId) return;
+    setIsPredicting(true);
+    setErrorMsg(null);
+    try {
+      const res = await runPrediction(selectedCaseId, {
+        model_id: selectedModelId,
+        target_customer_ids: [],
+        inference_mode: "subgraph",
+        hop_depth: hopDepth,
+        probability_threshold: threshold,
+        top_k: topK,
+        include_node_types: includeNodeTypes,
       });
+      setPredResult(res);
+
+      const targetPair =
+        (preservePairId
+          ? res.predictions.find((p) => p.pair_id === preservePairId)
+          : null) ??
+        res.predictions[0] ??
+        null;
+
+      if (targetPair) {
+        await handleSelectPair(targetPair, selectedCaseId, selectedModelId);
+      } else {
+        setSelectedPair(null);
+        setFocusPairEndpoints(null);
+        setPairDetail(null);
+        setHighlightedPath(null);
+      }
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : "Lỗi khi chạy suy luận GNN. Kiểm tra lại Backend Server."
+      );
+    } finally {
+      setIsPredicting(false);
     }
   };
-
-  const handleRunPredict = (preservePairId?: string) =>
-    executePredict({
-      caseId: selectedCaseId,
-      modelId: selectedModelId,
-      tau: threshold,
-      k: topK,
-      depth: hopDepth,
-      nodeTypes: includeNodeTypes,
-      preservePairId,
-    });
 
   const handleFeedback = async (action: FeedbackAction, note: string) => {
-    if (!selectedPair || !predResult) return;
-    // Luôn dùng case_id và model_id thực sự của predResult hiện tại để đảm bảo toàn vẹn dữ liệu
-    const activeCaseId = predResult.case_id;
-    const activeModelId = predResult.model_used.model_id;
+    if (!selectedPair) return;
     setErrorMsg(null);
     const currentPairId = selectedPair.pair_id;
     try {
-      await submitFeedback(activeCaseId, {
+      await submitFeedback(selectedCaseId, {
         pair_id: selectedPair.pair_id,
         source: selectedPair.source,
         target: selectedPair.target,
-        model_id: activeModelId,
+        model_id: selectedModelId,
         predicted_score: selectedPair.score,
         action,
         note,
         reviewer_name: "Investigator_Viet",
       });
+      setToastMsg(
+        action === "CONFIRM"
+          ? `Đã xác nhận đồng phạm cặp ${selectedPair.source} ↔ ${selectedPair.target}`
+          : `Đã bác bỏ cảnh báo cặp ${selectedPair.source} ↔ ${selectedPair.target}`
+      );
       await handleRunPredict(currentPairId);
     } catch (err) {
       setErrorMsg(
@@ -294,37 +256,10 @@ function WorkspaceContent() {
     }
   };
 
-  // Đồng bộ realtime risk_level theo thanh trượt Threshold trên toàn Workspace
-  const effectivePredictions = useMemo<PredictedLinkItem[]>(() => {
-    if (!predResult) return [];
-    return predResult.predictions.map((p) => ({
-      ...p,
-      risk_level: computeRiskLevel(p.score, threshold),
-    }));
-  }, [predResult, threshold]);
-
-  const effectiveSelectedPair = useMemo<PredictedLinkItem | null>(() => {
-    if (!selectedPair) return null;
-    return {
-      ...selectedPair,
-      risk_level: computeRiskLevel(selectedPair.score, threshold),
-    };
-  }, [selectedPair, threshold]);
-
-  const dynamicRiskCounts = useMemo(() => {
-    let high = 0;
-    let medium = 0;
-    for (const p of effectivePredictions) {
-      if (p.risk_level === "HIGH") high += 1;
-      else if (p.risk_level === "MEDIUM") medium += 1;
-    }
-    return { high, medium };
-  }, [effectivePredictions]);
-
   return (
-    <div className="space-y-4">
+    <div className="lg:h-[calc(100vh-88px)] lg:overflow-hidden flex flex-col gap-3">
       {errorMsg && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 text-sm flex items-center justify-between gap-3">
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-2 text-xs flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
             <span>{errorMsg}</span>
@@ -339,10 +274,27 @@ function WorkspaceContent() {
         </div>
       )}
 
+      {toastMsg && (
+        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl px-4 py-2 text-xs flex items-center justify-between gap-3 shadow-sm shrink-0">
+          <div className="flex items-center gap-2 font-medium">
+            <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{toastMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToastMsg(null)}
+            className="text-emerald-600 hover:text-emerald-800"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Thanh trạng thái phiên suy luận */}
       {predResult && (
-        <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 shadow-sm">
+        <div className="bg-white border border-slate-200/90 rounded-xl px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600 shadow-sm num shrink-0">
           <div className="flex items-center gap-4 flex-wrap">
-            <span className="flex items-center gap-1.5 font-medium text-slate-900">
+            <span className="flex items-center gap-1.5 font-semibold text-slate-900">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               {predResult.model_used.display_name}
             </span>
@@ -356,19 +308,20 @@ function WorkspaceContent() {
               {predResult.execution_time_ms.toFixed(1)} ms
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-medium border border-red-200">
-              HIGH: {dynamicRiskCounts.high}
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded-md bg-red-50 text-red-700 font-semibold border border-red-200">
+              HIGH: {predResult.subgraph_stats.high_risk_pairs}
             </span>
-            <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
-              MEDIUM: {dynamicRiskCounts.medium}
+            <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-semibold border border-amber-200">
+              MEDIUM: {predResult.subgraph_stats.medium_risk_pairs}
             </span>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-12 gap-4 items-start">
-        <div className="col-span-12 lg:col-span-3">
+      {/* Bố cục 3 cột khóa chiều cao theo viewport (min-h-0 flex-1) để không bị đẩy tràn trang */}
+      <div className="flex-1 min-h-0 grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-3 h-full min-h-0 flex flex-col">
           <InferenceSidebar
             cases={cases}
             models={models}
@@ -380,8 +333,11 @@ function WorkspaceContent() {
             includeNodeTypes={includeNodeTypes}
             isPredicting={isPredicting}
             isLoadingMeta={isLoadingMeta}
-            onCaseChange={handleCaseChange}
-            onModelChange={handleModelChange}
+            onCaseChange={setSelectedCaseId}
+            onModelChange={(id, defaultTau) => {
+              setSelectedModelId(id);
+              setThreshold(defaultTau);
+            }}
             onThresholdChange={setThreshold}
             onTopKChange={setTopK}
             onHopDepthChange={setHopDepth}
@@ -390,38 +346,50 @@ function WorkspaceContent() {
                 prev.includes(nt) ? prev.filter((x) => x !== nt) : [...prev, nt]
               )
             }
-            onRunPredict={() => void handleRunPredict()}
+            onRunPredict={() => handleRunPredict()}
           />
         </div>
 
-        <div className="col-span-12 lg:col-span-5 space-y-4">
+        <div className="col-span-12 lg:col-span-5 h-full min-h-0 flex flex-col gap-3">
           <CytoscapeCanvas
             graphPayload={predResult?.graph_payload ?? null}
-            threshold={threshold}
+            threshold={deferredThreshold}
             includeNodeTypes={includeNodeTypes}
             highlightedPath={highlightedPath}
+            selectedPairEndpoints={focusPairEndpoints}
             onSelectPredictedEdge={(pairId) => {
-              const found = effectivePredictions.find(
+              const found = predResult?.predictions.find(
                 (p) => p.pair_id === pairId
               );
-              if (found) void handleSelectPair(found);
+              if (found) handleSelectPair(found);
             }}
-            onClearHighlight={() => setHighlightedPath(null)}
+            onClearHighlight={() => {
+              setHighlightedPath(null);
+              setFocusPairEndpoints(null);
+            }}
           />
           <RankingTable
-            predictions={effectivePredictions}
-            selectedPairId={effectiveSelectedPair?.pair_id ?? null}
-            onSelectPair={(item) => void handleSelectPair(item)}
+            predictions={predResult?.predictions ?? []}
+            selectedPairId={selectedPair?.pair_id ?? null}
+            onSelectPair={(item) => handleSelectPair(item)}
           />
         </div>
 
-        <div className="col-span-12 lg:col-span-4">
+        <div className="col-span-12 lg:col-span-4 h-full min-h-0 flex flex-col">
           <EvidenceDrawer
-            selectedPair={effectiveSelectedPair}
+            selectedPair={selectedPair}
             pairDetail={pairDetail}
             highlightedPathId={highlightedPath?.path_id ?? null}
             isLoadingDetail={isLoadingDetail}
-            onHighlightPath={setHighlightedPath}
+            onHighlightPath={(path) => {
+              setHighlightedPath(path);
+              if (selectedPair) {
+                setFocusPairEndpoints({
+                  source: selectedPair.source,
+                  target: selectedPair.target,
+                });
+              }
+            }}
             onSubmitFeedback={handleFeedback}
           />
         </div>
