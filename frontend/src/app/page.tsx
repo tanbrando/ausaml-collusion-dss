@@ -23,10 +23,16 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { fetchCases, fetchModels, uploadCase } from "@/lib/api";
+import {
+  fetchCases,
+  fetchModels,
+  GateCheckUploadError,
+  uploadCase,
+} from "@/lib/api";
 import type {
   CaseSummary,
   CaseUploadResponse,
+  GateCheckReport,
   ModelInfo,
 } from "@/types/contract";
 
@@ -46,6 +52,8 @@ export default function CaseCommandCenterPage() {
   const [uploadResult, setUploadResult] = useState<CaseUploadResponse | null>(
     null
   );
+  const [failedGateCheck, setFailedGateCheck] =
+    useState<GateCheckReport | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -82,6 +90,7 @@ export default function CaseCommandCenterPage() {
     setIsUploading(true);
     setUploadError(null);
     setUploadResult(null);
+    setFailedGateCheck(null);
     try {
       const res = await uploadCase(
         title.trim() || selectedFile.name,
@@ -97,9 +106,14 @@ export default function CaseCommandCenterPage() {
       setDescription("");
       setSelectedFile(null);
     } catch (err) {
-      setUploadError(
-        err instanceof Error ? err.message : "Tải lên file .pt thất bại."
-      );
+      if (err instanceof GateCheckUploadError) {
+        setFailedGateCheck(err.gateCheck);
+        setUploadError(err.message);
+      } else {
+        setUploadError(
+          err instanceof Error ? err.message : "Tải lên file .pt thất bại."
+        );
+      }
     } finally {
       setIsUploading(false);
     }
@@ -380,26 +394,29 @@ export default function CaseCommandCenterPage() {
           </div>
         </form>
 
-        {/* Gate Check 1 Report */}
-        {uploadResult && (
+        {/* Gate Check 1 Report (cả PASSED lẫn FAILED 422) */}
+        {(uploadResult?.gate_check || failedGateCheck) && (() => {
+          const gc = uploadResult?.gate_check ?? failedGateCheck!;
+          const uploadedCaseId = uploadResult?.case.case_id;
+          return (
           <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                {uploadResult.gate_check.passed ? (
+                {gc.passed ? (
                   <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                 ) : (
                   <XCircle className="w-5 h-5 text-red-600" />
                 )}
                 <span className="font-semibold text-sm text-slate-900">
                   Kết quả Kiểm định Gate Check 1 —{" "}
-                  {uploadResult.gate_check.passed ? "ĐẠT (PASSED)" : "KHÔNG ĐẠT"}
+                  {gc.passed ? "ĐẠT (PASSED)" : "KHÔNG ĐẠT (REJECTED)"}
                 </span>
               </div>
 
-              {uploadResult.gate_check.passed && (
+              {gc.passed && uploadedCaseId && (
                 <Link
                   href={`/workspace?case_id=${encodeURIComponent(
-                    uploadResult.case.case_id
+                    uploadedCaseId
                   )}`}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700"
                 >
@@ -414,24 +431,24 @@ export default function CaseCommandCenterPage() {
                 <div className="text-slate-500">node_dims_valid</div>
                 <div
                   className={`font-semibold mt-0.5 ${
-                    uploadResult.gate_check.node_dims_valid
+                    gc.node_dims_valid
                       ? "text-emerald-700"
                       : "text-red-600"
                   }`}
                 >
-                  {uploadResult.gate_check.node_dims_valid ? "✓ Hợp lệ" : "✕ Lỗi"}
+                  {gc.node_dims_valid ? "✓ Hợp lệ" : "✕ Lỗi"}
                 </div>
               </div>
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                 <div className="text-slate-500">edge_bounds_valid</div>
                 <div
                   className={`font-semibold mt-0.5 ${
-                    uploadResult.gate_check.edge_bounds_valid
+                    gc.edge_bounds_valid
                       ? "text-emerald-700"
                       : "text-red-600"
                   }`}
                 >
-                  {uploadResult.gate_check.edge_bounds_valid
+                  {gc.edge_bounds_valid
                     ? "✓ Hợp lệ"
                     : "✕ Lỗi"}
                 </div>
@@ -439,35 +456,36 @@ export default function CaseCommandCenterPage() {
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                 <div className="text-slate-500">nan_count</div>
                 <div className="font-mono font-semibold text-slate-900 mt-0.5">
-                  {uploadResult.gate_check.nan_count}
+                  {gc.nan_count}
                 </div>
               </div>
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                 <div className="text-slate-500">inf_count</div>
                 <div className="font-mono font-semibold text-slate-900 mt-0.5">
-                  {uploadResult.gate_check.inf_count}
+                  {gc.inf_count}
                 </div>
               </div>
               <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                 <div className="text-slate-500">reverse_edges_added</div>
                 <div className="font-mono font-semibold text-slate-900 mt-0.5">
-                  {uploadResult.gate_check.reverse_edges_added.toLocaleString()}
+                  {gc.reverse_edges_added.toLocaleString()}
                 </div>
               </div>
             </div>
 
-            {uploadResult.gate_check.warnings.length > 0 && (
+            {gc.warnings.length > 0 && (
               <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-                <b>Cảnh báo:</b> {uploadResult.gate_check.warnings.join(" · ")}
+                <b>Cảnh báo:</b> {gc.warnings.join(" · ")}
               </div>
             )}
-            {uploadResult.gate_check.errors.length > 0 && (
+            {gc.errors.length > 0 && (
               <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2.5">
-                <b>Lỗi:</b> {uploadResult.gate_check.errors.join(" · ")}
+                <b>Lỗi:</b> {gc.errors.join(" · ")}
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
       </section>
     </div>
   );

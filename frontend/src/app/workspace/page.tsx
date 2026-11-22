@@ -1,14 +1,18 @@
 "use client";
 
 /**
- * MÀN HÌNH 2 (M3 - Việt): DSS Interactive Graph Workspace (/workspace)
+ * MÀN HÌNH 2 (M3 - Việt + Refactored Full-Stack Integration): DSS Interactive Graph Workspace (/workspace)
  * Bố cục 3 cột chuẩn SRS Mục 8:
  * - Cột trái (~25%): InferenceSidebar
  * - Cột giữa (~45%): CytoscapeCanvas (trên) + RankingTable (dưới)
  * - Cột phải (~30%): EvidenceDrawer (Giải thích Bridge Paths, Radar & Human-in-the-Loop)
+ *
+ * Cải tiến tích hợp:
+ * - Auto-run suy luận khi mở trang hoặc đổi Vụ án / Mô hình (chống ghi nhầm Feedback chéo vụ án).
+ * - Đồng bộ realtime `threshold` slider trên cả CytoscapeCanvas, RankingTable, EvidenceDrawer & bộ đếm HIGH/MEDIUM.
  */
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AlertCircle, CheckCircle2, Clock, Network, X } from "lucide-react";
 import {
@@ -18,6 +22,7 @@ import {
   runPrediction,
   submitFeedback,
 } from "@/lib/api";
+import { computeRiskLevel } from "@/types/contract";
 import type {
   CaseSummary,
   EvidencePath,
@@ -74,11 +79,95 @@ function WorkspaceContent() {
     null
   );
 
-  useEffect(() => {
-    if (caseIdFromQuery) {
-      setSelectedCaseId(caseIdFromQuery);
-    }
-  }, [caseIdFromQuery]);
+  // Guard chống race condition khi đổi Vụ án / Mô hình nhanh liên tiếp
+  const predictSeqRef = useRef(0);
+  const metaReadyRef = useRef(false);
+
+  const handleSelectPair = useCallback(
+    async (
+      item: PredictedLinkItem,
+      caseIdOverride?: string,
+      modelIdOverride?: string
+    ) => {
+      setSelectedPair(item);
+      setHighlightedPath(item.evidence_paths[0] ?? null);
+      setIsLoadingDetail(true);
+      try {
+        const detail = await explainPair(caseIdOverride ?? selectedCaseId, {
+          source: item.source,
+          target: item.target,
+          model_id: modelIdOverride ?? selectedModelId,
+        });
+        setPairDetail(detail);
+      } catch (err) {
+        setErrorMsg(
+          err instanceof Error
+            ? err.message
+            : "Không thể tải chi tiết giải thích cặp nghi vấn."
+        );
+      } finally {
+        setIsLoadingDetail(false);
+      }
+    },
+    [selectedCaseId, selectedModelId]
+  );
+
+  const executePredict = useCallback(
+    async (opts: {
+      caseId: string;
+      modelId: string;
+      tau: number;
+      k: number;
+      depth: number;
+      nodeTypes: NodeType[];
+      preservePairId?: string;
+    }) => {
+      if (!opts.caseId) return;
+      const reqSeq = ++predictSeqRef.current;
+      setIsPredicting(true);
+      setErrorMsg(null);
+      try {
+        const res = await runPrediction(opts.caseId, {
+          model_id: opts.modelId,
+          target_customer_ids: [],
+          inference_mode: "subgraph",
+          hop_depth: opts.depth,
+          probability_threshold: opts.tau,
+          top_k: opts.k,
+          include_node_types: opts.nodeTypes,
+        });
+        if (reqSeq !== predictSeqRef.current) return;
+        setPredResult(res);
+
+        const targetPair =
+          (opts.preservePairId
+            ? res.predictions.find((p) => p.pair_id === opts.preservePairId)
+            : null) ??
+          res.predictions[0] ??
+          null;
+
+        if (targetPair) {
+          await handleSelectPair(targetPair, opts.caseId, opts.modelId);
+        } else {
+          setSelectedPair(null);
+          setPairDetail(null);
+          setHighlightedPath(null);
+        }
+      } catch (err) {
+        if (reqSeq !== predictSeqRef.current) return;
+        setErrorMsg(
+          err instanceof Error
+            ? err.message
+            : "Lỗi khi chạy suy luận GNN. Kiểm tra lại Backend Server."
+        );
+      } finally {
+        if (reqSeq === predictSeqRef.current) {
+          setIsPredicting(false);
+        }
+      }
+    },
+    [handleSelectPair]
+  );
 
   useEffect(() => {
     let active = true;
@@ -89,25 +178,30 @@ function WorkspaceContent() {
       .then(([casesRes, modelsRes]) => {
         if (!active) return;
         setCases(casesRes.cases);
+        let initCaseId = caseIdFromQuery || "case_01_smurfing_ring";
         if (casesRes.cases.length > 0) {
-          const targetCase = caseIdFromQuery
-            ? casesRes.cases.find((c) => c.case_id === caseIdFromQuery)
-            : null;
-          if (targetCase) {
-            setSelectedCaseId(targetCase.case_id);
-          } else if (
-            !casesRes.cases.some((c) => c.case_id === selectedCaseId)
-          ) {
-            setSelectedCaseId(casesRes.cases[0].case_id);
-          }
+          const matched = casesRes.cases.find((c) => c.case_id === initCaseId);
+          initCaseId = matched ? matched.case_id : casesRes.cases[0].case_id;
+          setSelectedCaseId(initCaseId);
         }
 
         setModels(modelsRes.models);
-        setSelectedModelId(modelsRes.default_model_id);
-        const rec = modelsRes.models.find(
-          (m) => m.model_id === modelsRes.default_model_id
-        );
-        if (rec) setThreshold(rec.default_threshold);
+        const initModelId = modelsRes.default_model_id;
+        setSelectedModelId(initModelId);
+        const rec = modelsRes.models.find((m) => m.model_id === initModelId);
+        const initTau = rec ? rec.default_threshold : 0.5682;
+        setThreshold(initTau);
+        metaReadyRef.current = true;
+
+        // Tự động chạy suy luận ngay khi vào Phòng Điều Tra
+        void executePredict({
+          caseId: initCaseId,
+          modelId: initModelId,
+          tau: initTau,
+          k: topK,
+          depth: hopDepth,
+          nodeTypes: includeNodeTypes,
+        });
       })
       .catch((err) => {
         if (!active) return;
@@ -124,85 +218,67 @@ function WorkspaceContent() {
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseIdFromQuery]);
 
-  const handleSelectPair = async (
-    item: PredictedLinkItem,
-    caseIdOverride?: string,
-    modelIdOverride?: string
-  ) => {
-    setSelectedPair(item);
-    setHighlightedPath(item.evidence_paths[0] ?? null);
-    setIsLoadingDetail(true);
-    try {
-      const detail = await explainPair(caseIdOverride ?? selectedCaseId, {
-        source: item.source,
-        target: item.target,
-        model_id: modelIdOverride ?? selectedModelId,
+  const handleCaseChange = (newCaseId: string) => {
+    setSelectedCaseId(newCaseId);
+    // Xóa ngay state cũ để không bao giờ ghi nhầm feedback sang vụ án mới
+    setPredResult(null);
+    setSelectedPair(null);
+    setPairDetail(null);
+    setHighlightedPath(null);
+    if (metaReadyRef.current) {
+      void executePredict({
+        caseId: newCaseId,
+        modelId: selectedModelId,
+        tau: threshold,
+        k: topK,
+        depth: hopDepth,
+        nodeTypes: includeNodeTypes,
       });
-      setPairDetail(detail);
-    } catch (err) {
-      setErrorMsg(
-        err instanceof Error
-          ? err.message
-          : "Không thể tải chi tiết giải thích cặp nghi vấn."
-      );
-    } finally {
-      setIsLoadingDetail(false);
     }
   };
 
-  const handleRunPredict = async (preservePairId?: string) => {
-    if (!selectedCaseId) return;
-    setIsPredicting(true);
-    setErrorMsg(null);
-    try {
-      const res = await runPrediction(selectedCaseId, {
-        model_id: selectedModelId,
-        target_customer_ids: [],
-        inference_mode: "subgraph",
-        hop_depth: hopDepth,
-        probability_threshold: threshold,
-        top_k: topK,
-        include_node_types: includeNodeTypes,
+  const handleModelChange = (newModelId: string, defaultTau: number) => {
+    setSelectedModelId(newModelId);
+    setThreshold(defaultTau);
+    if (metaReadyRef.current) {
+      void executePredict({
+        caseId: selectedCaseId,
+        modelId: newModelId,
+        tau: defaultTau,
+        k: topK,
+        depth: hopDepth,
+        nodeTypes: includeNodeTypes,
       });
-      setPredResult(res);
-
-      const targetPair =
-        (preservePairId
-          ? res.predictions.find((p) => p.pair_id === preservePairId)
-          : null) ??
-        res.predictions[0] ??
-        null;
-
-      if (targetPair) {
-        await handleSelectPair(targetPair, selectedCaseId, selectedModelId);
-      } else {
-        setSelectedPair(null);
-        setPairDetail(null);
-        setHighlightedPath(null);
-      }
-    } catch (err) {
-      setErrorMsg(
-        err instanceof Error
-          ? err.message
-          : "Lỗi khi chạy suy luận GNN. Kiểm tra lại Backend Server."
-      );
-    } finally {
-      setIsPredicting(false);
     }
   };
+
+  const handleRunPredict = (preservePairId?: string) =>
+    executePredict({
+      caseId: selectedCaseId,
+      modelId: selectedModelId,
+      tau: threshold,
+      k: topK,
+      depth: hopDepth,
+      nodeTypes: includeNodeTypes,
+      preservePairId,
+    });
 
   const handleFeedback = async (action: FeedbackAction, note: string) => {
-    if (!selectedPair) return;
+    if (!selectedPair || !predResult) return;
+    // Luôn dùng case_id và model_id thực sự của predResult hiện tại để đảm bảo toàn vẹn dữ liệu
+    const activeCaseId = predResult.case_id;
+    const activeModelId = predResult.model_used.model_id;
     setErrorMsg(null);
     const currentPairId = selectedPair.pair_id;
     try {
-      await submitFeedback(selectedCaseId, {
+      await submitFeedback(activeCaseId, {
         pair_id: selectedPair.pair_id,
         source: selectedPair.source,
         target: selectedPair.target,
-        model_id: selectedModelId,
+        model_id: activeModelId,
         predicted_score: selectedPair.score,
         action,
         note,
@@ -217,6 +293,33 @@ function WorkspaceContent() {
       );
     }
   };
+
+  // Đồng bộ realtime risk_level theo thanh trượt Threshold trên toàn Workspace
+  const effectivePredictions = useMemo<PredictedLinkItem[]>(() => {
+    if (!predResult) return [];
+    return predResult.predictions.map((p) => ({
+      ...p,
+      risk_level: computeRiskLevel(p.score, threshold),
+    }));
+  }, [predResult, threshold]);
+
+  const effectiveSelectedPair = useMemo<PredictedLinkItem | null>(() => {
+    if (!selectedPair) return null;
+    return {
+      ...selectedPair,
+      risk_level: computeRiskLevel(selectedPair.score, threshold),
+    };
+  }, [selectedPair, threshold]);
+
+  const dynamicRiskCounts = useMemo(() => {
+    let high = 0;
+    let medium = 0;
+    for (const p of effectivePredictions) {
+      if (p.risk_level === "HIGH") high += 1;
+      else if (p.risk_level === "MEDIUM") medium += 1;
+    }
+    return { high, medium };
+  }, [effectivePredictions]);
 
   return (
     <div className="space-y-4">
@@ -255,10 +358,10 @@ function WorkspaceContent() {
           </div>
           <div className="flex items-center gap-3">
             <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-medium border border-red-200">
-              HIGH: {predResult.subgraph_stats.high_risk_pairs}
+              HIGH: {dynamicRiskCounts.high}
             </span>
             <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium border border-amber-200">
-              MEDIUM: {predResult.subgraph_stats.medium_risk_pairs}
+              MEDIUM: {dynamicRiskCounts.medium}
             </span>
           </div>
         </div>
@@ -277,11 +380,8 @@ function WorkspaceContent() {
             includeNodeTypes={includeNodeTypes}
             isPredicting={isPredicting}
             isLoadingMeta={isLoadingMeta}
-            onCaseChange={setSelectedCaseId}
-            onModelChange={(id, defaultTau) => {
-              setSelectedModelId(id);
-              setThreshold(defaultTau);
-            }}
+            onCaseChange={handleCaseChange}
+            onModelChange={handleModelChange}
             onThresholdChange={setThreshold}
             onTopKChange={setTopK}
             onHopDepthChange={setHopDepth}
@@ -290,7 +390,7 @@ function WorkspaceContent() {
                 prev.includes(nt) ? prev.filter((x) => x !== nt) : [...prev, nt]
               )
             }
-            onRunPredict={() => handleRunPredict()}
+            onRunPredict={() => void handleRunPredict()}
           />
         </div>
 
@@ -301,23 +401,23 @@ function WorkspaceContent() {
             includeNodeTypes={includeNodeTypes}
             highlightedPath={highlightedPath}
             onSelectPredictedEdge={(pairId) => {
-              const found = predResult?.predictions.find(
+              const found = effectivePredictions.find(
                 (p) => p.pair_id === pairId
               );
-              if (found) handleSelectPair(found);
+              if (found) void handleSelectPair(found);
             }}
             onClearHighlight={() => setHighlightedPath(null)}
           />
           <RankingTable
-            predictions={predResult?.predictions ?? []}
-            selectedPairId={selectedPair?.pair_id ?? null}
-            onSelectPair={(item) => handleSelectPair(item)}
+            predictions={effectivePredictions}
+            selectedPairId={effectiveSelectedPair?.pair_id ?? null}
+            onSelectPair={(item) => void handleSelectPair(item)}
           />
         </div>
 
         <div className="col-span-12 lg:col-span-4">
           <EvidenceDrawer
-            selectedPair={selectedPair}
+            selectedPair={effectiveSelectedPair}
             pairDetail={pairDetail}
             highlightedPathId={highlightedPath?.path_id ?? null}
             isLoadingDetail={isLoadingDetail}

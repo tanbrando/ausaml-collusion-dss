@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   CheckCircle2,
@@ -266,7 +267,12 @@ export default function AuditPage() {
                 {filteredFeedbacks.map((fb) => (
                   <tr key={fb.id} className="hover:bg-slate-50/80">
                     <td className="py-2.5 px-4 font-mono text-slate-700 whitespace-nowrap">
-                      {fb.case_id}
+                      <Link
+                        href={`/workspace?case_id=${encodeURIComponent(fb.case_id)}`}
+                        className="text-blue-700 hover:underline"
+                      >
+                        {fb.case_id}
+                      </Link>
                     </td>
                     <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 whitespace-nowrap">
                       {fb.source_cust_id} ↔ {fb.target_cust_id}
