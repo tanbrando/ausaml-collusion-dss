@@ -12,6 +12,7 @@ import type {
   ExplainPairResponse,
   FeedbackRecord,
   FeedbackRequest,
+  GateCheckReport,
   ModelListResponse,
   PredictRequest,
   PredictResponse,
@@ -44,7 +45,17 @@ export function fetchCases(): Promise<CaseListResponse> {
   return apiRequest<CaseListResponse>("/api/v1/cases");
 }
 
-export function uploadCase(
+export class GateCheckUploadError extends Error {
+  gateCheck: GateCheckReport;
+
+  constructor(message: string, gateCheck: GateCheckReport) {
+    super(message);
+    this.name = "GateCheckUploadError";
+    this.gateCheck = gateCheck;
+  }
+}
+
+export async function uploadCase(
   title: string,
   description: string,
   file: File
@@ -53,10 +64,30 @@ export function uploadCase(
   form.append("title", title);
   form.append("description", description);
   form.append("file", file);
-  return apiRequest<CaseUploadResponse>("/api/v1/cases/upload", {
+  const res = await fetch(`${API_BASE}/api/v1/cases/upload`, {
     method: "POST",
     body: form,
   });
+  if (!res.ok) {
+    if (res.status === 422) {
+      try {
+        const body = (await res.json()) as {
+          detail?: { message?: string; gate_check?: GateCheckReport };
+        };
+        if (body?.detail?.gate_check) {
+          throw new GateCheckUploadError(
+            body.detail.message || "Gate Check 1 thất bại",
+            body.detail.gate_check
+          );
+        }
+      } catch (inner) {
+        if (inner instanceof GateCheckUploadError) throw inner;
+      }
+    }
+    const errText = await res.text();
+    throw new Error(`API /api/v1/cases/upload failed (${res.status}): ${errText}`);
+  }
+  return res.json() as Promise<CaseUploadResponse>;
 }
 
 export function runPrediction(
