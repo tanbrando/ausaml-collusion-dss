@@ -2,7 +2,7 @@
 
 /**
  * Cột Giữa Trên (M3 - Việt): Đồ thị tương tác Cytoscape.js
- * Tinh chỉnh theo review lần 3 (a, b, c, d, e):
+ * Tích hợp đầy đủ từ file tham khảo `CytoscapeCanvas.tsx` (Review lần 3 + lần 4: a -> i):
  * - (a) Mặc định ẩn nhãn node/cạnh; chỉ hiện nhãn trên các đỉnh thuộc cặp/Bridge Path đang chọn
  *       và khi di chuột (hover `mouseover` -> `closedNeighborhood().addClass("show-label")`).
  * - (a) Kích thước node tỷ lệ theo bậc hiển thị `mapData(deg, 0, 10, 18, 34)`.
@@ -10,10 +10,15 @@
  *       và `cy.fit(cy.elements(":visible"), 40)` để đồ thị luôn phóng to rõ nét.
  * - (e) Cạnh quan sát (`OBSERVED_EDGE`) mảnh và mờ (`width: 1, opacity: 0.3`);
  *       cạnh dự báo `HIGH` đỏ, `MEDIUM` cam nổi bật rõ ràng.
+ * - (f) ResizeObserver -> `cy.resize()` + fit lại: sửa lỗi đồ thị lệch/cắt mép khi card co giãn.
+ * - (g) Chọn cặp/path -> zoom vừa phải vào đúng cụm được highlight (giới hạn max zoom 1.35x để không phóng quá to).
+ * - (h) Đỉnh vừa hiện lên mà chưa có tọa độ (`!laidOutRef.current.has(n.id())`) -> tự chạy lại layout.
+ * - (i) Nhãn cạnh được highlight nằm ngang (`"text-rotation": "none"`) để khỏi bị chữ dọc chồng nhau.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape, {
+  type CollectionReturnValue,
   type Core,
   type ElementDefinition,
   type StylesheetStyle,
@@ -50,6 +55,27 @@ interface CytoscapeCanvasProps {
   selectedPairEndpoints?: { source: string; target: string } | null;
   onSelectPredictedEdge: (pairId: string) => void;
   onClearHighlight?: () => void;
+}
+
+/**
+ * Fit vào tập phần tử mục tiêu nhưng giới hạn mức zoom tối đa (`maxFocusZoom = 1.35`)
+ * để khi cụm highlight chỉ có 3-5 đỉnh sẽ không bị phóng quá to gây đè nhãn.
+ */
+function fitWithMaxZoom(
+  cy: Core,
+  targetEls: CollectionReturnValue,
+  padding = 75,
+  maxFocusZoom = 1.35
+): void {
+  if (targetEls.empty()) return;
+  cy.fit(targetEls, padding);
+  if (cy.zoom() > maxFocusZoom) {
+    cy.zoom({
+      level: maxFocusZoom,
+      renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+    });
+    cy.center(targetEls);
+  }
 }
 
 function buildCytoscapeStyles(): StylesheetStyle[] {
@@ -212,6 +238,8 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
         color: "#1e40af",
         "font-weight": 700,
         label: "data(relation_or_score)",
+        // (i) Nhãn cạnh được highlight nằm ngang (không autorotate) để khỏi bị chữ dọc chồng nhau
+        "text-rotation": "none",
         "z-index": 998,
       },
     },
@@ -236,6 +264,7 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       style: {
         opacity: 1,
         label: "data(relation_or_score)",
+        "text-rotation": "none",
         "z-index": 997,
       },
     },
@@ -254,6 +283,8 @@ export function CytoscapeCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const layoutModeRef = useRef<LayoutMode>("cose");
+  // Tập đỉnh đã được layout đặt tọa độ (đỉnh bị ẩn lúc layout sẽ chưa có tọa độ hợp lệ)
+  const laidOutRef = useRef<Set<string>>(new Set());
   const onSelectEdgeRef = useRef(onSelectPredictedEdge);
   const onClearHighlightRef = useRef(onClearHighlight);
 
@@ -339,7 +370,7 @@ export function CytoscapeCanvas({
       elements,
       style: buildCytoscapeStyles(),
       minZoom: 0.3,
-      maxZoom: 3,
+      maxZoom: 2.5,
       wheelSensitivity: 0.2,
     });
 
@@ -420,6 +451,7 @@ export function CytoscapeCanvas({
       false,
       focusNodeIds
     );
+    laidOutRef.current = new Set(cy.nodes(":visible").map((n) => n.id()));
 
     return () => {
       cy.destroy();
@@ -462,9 +494,30 @@ export function CytoscapeCanvas({
     });
 
     setVisibleCounts({ nodes: shownNodes, edges: shownEdges });
-    const vis = cy.elements(":visible");
-    if (vis.nonempty()) {
-      cy.fit(vis, 40);
+
+    // (h) Có đỉnh vừa hiện lên nhưng chưa từng được đặt tọa độ -> chạy lại layout
+    const needsLayout = cy
+      .nodes(":visible")
+      .toArray()
+      .some((n) => !laidOutRef.current.has(n.id()));
+    if (needsLayout) {
+      applyGraphLayout(
+        cy,
+        graphPayload,
+        layoutModeRef.current,
+        false,
+        focusNodeIds
+      );
+      laidOutRef.current = new Set(cy.nodes(":visible").map((n) => n.id()));
+      return;
+    }
+
+    // (g) Khi đang có cặp/path được chọn thì effect 3 sẽ zoom vào cụm đó; chỉ fit toàn cảnh khi không có focus
+    if (focusNodeIds.size === 0) {
+      const vis = cy.elements(":visible");
+      if (vis.nonempty()) {
+        cy.fit(vis, 40);
+      }
     }
   }, [graphPayload, threshold, includeNodeTypes, focusNodeIds]);
 
@@ -507,6 +560,16 @@ export function CytoscapeCanvas({
         }
       });
     });
+
+    // (g) Zoom vừa phải vào đúng cụm được highlight (kèm giới hạn max zoom 1.35x để nhãn thoáng)
+    if (hasHighlight) {
+      const focusEls = cy
+        .elements(".highlighted-node, .highlighted-edge")
+        .filter(":visible");
+      if (focusEls.nonempty()) {
+        fitWithMaxZoom(cy, focusEls, 75, 1.35);
+      }
+    }
   }, [
     graphPayload,
     highlightedPath,
@@ -528,12 +591,47 @@ export function CytoscapeCanvas({
     });
   }, [showAllLabels, graphPayload]);
 
+  // 5) (f) Container co giãn (card đồ thị chia chiều cao với bảng xếp hạng) -> cập nhật canvas rồi fit lại
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const cy = cyRef.current;
+        if (!cy) return;
+        cy.resize();
+        const focusEls = cy
+          .elements(".highlighted-node, .highlighted-edge")
+          .filter(":visible");
+        const hasFocus = focusEls.nonempty();
+        if (hasFocus) {
+          fitWithMaxZoom(cy, focusEls, 75, 1.35);
+        } else {
+          const vis = cy.elements(":visible");
+          if (vis.nonempty()) cy.fit(vis, 40);
+        }
+      });
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, []);
+
+  const runLayout = (mode: LayoutMode) => {
+    const cy = cyRef.current;
+    if (!cy || !graphPayload) return;
+    applyGraphLayout(cy, graphPayload, mode, true, focusNodeIds);
+    laidOutRef.current = new Set(cy.nodes(":visible").map((n) => n.id()));
+  };
+
   const handleChangeLayout = (mode: LayoutMode) => {
     setLayoutMode(mode);
     layoutModeRef.current = mode;
-    if (cyRef.current && graphPayload) {
-      applyGraphLayout(cyRef.current, graphPayload, mode, true, focusNodeIds);
-    }
+    runLayout(mode);
   };
 
   const handleZoom = (factor: number) => {
@@ -634,17 +732,7 @@ export function CytoscapeCanvas({
             </button>
             <button
               type="button"
-              onClick={() =>
-                cyRef.current &&
-                graphPayload &&
-                applyGraphLayout(
-                  cyRef.current,
-                  graphPayload,
-                  layoutMode,
-                  true,
-                  focusNodeIds
-                )
-              }
+              onClick={() => runLayout(layoutMode)}
               title="Sắp xếp lại bố cục"
               className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
             >

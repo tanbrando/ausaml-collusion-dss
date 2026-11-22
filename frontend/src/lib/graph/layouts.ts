@@ -1,14 +1,14 @@
 /**
  * Thuật toán bố cục đồ thị dị thể AML (Single Responsibility).
- * Tinh chỉnh theo review lần 3 (chỉ chạy layout trên các phần tử đang hiển thị `:visible`):
- * - COSE: `nodeRepulsion: 20000`, `idealEdgeLength: 90`, `gravity: 1.2`, `componentSpacing: 60`, `nodeOverlap: 20`, `numIter: 1500`
- * - Đồng tâm (Concentric): Đặt cặp đỉnh đang điều tra / node mục tiêu ở tâm (hop = 0),
- *   các vòng ngoài xếp theo khoảng cách bước nhảy BFS `concentric: n => 100 - hopFromTarget(n) * 25`, `minNodeSpacing: 30`.
- * - Phân tầng AML (Barycenter Tiered Preset): Chia tầng theo loại node (Customer Nguồn -> Account -> Device/IP/Benef -> Customer Đích)
- *   và sắp thứ tự ngang trong từng hàng bằng trung bình vị trí hàng xóm (Barycenter Heuristic) để giảm tối đa đường cắt chéo.
+ * Kết hợp đầy đủ Review lần 3 + lần 4 từ file tham khảo `layouts.ts`:
+ * - COSE: cạnh nối với đỉnh trọng tâm dài hơn (`150` vs `100`), kèm bước hậu xử lý chống dính nút
+ *   `enforceMinNodeDistance` (đảm bảo mọi đỉnh trọng tâm cách nhau >= 120px, đỉnh thường >= 82px)
+ *   để khi zoom vào Bridge Path các nhãn `CUST_...`, `ACC_...`, `OWNS`, `USES_DEVICE` không bao giờ đè lên nhau.
+ * - Đồng tâm (Concentric): Đặt cặp đỉnh đang điều tra ở tâm (hop = 0), các vòng ngoài xếp theo BFS hop, `minNodeSpacing: 36`.
+ * - Phân tầng AML (Barycenter Tiered Preset): Sắp thứ tự ngang bằng Barycenter Heuristic và ngắt tầng quá 8 đỉnh thành nhiều hàng (`MAX_PER_ROW = 8`).
  */
 
-import type { Core, NodeSingular } from "cytoscape";
+import type { CollectionReturnValue, Core, EdgeSingular, NodeSingular } from "cytoscape";
 import type { CytoscapeGraphPayload, NodeType } from "@/types/contract";
 
 export type LayoutMode = "cose" | "concentric" | "breadthfirst";
@@ -71,7 +71,7 @@ function computeHopFromTargets(
 
 /**
  * Phân tầng AML kèm sắp xếp thứ tự ngang bằng Barycenter Heuristic (trung bình chỉ số cột của hàng xóm)
- * để các đỉnh có liên kết nằm thẳng trục dọc với nhau, giảm tối đa cạnh cắt chéo.
+ * và ngắt tầng > 8 đỉnh thành nhiều hàng (`MAX_PER_ROW = 8`).
  */
 export function computeBarycenterTieredPositions(
   visibleNodes: Array<{ id: string; node_type: NodeType }>,
@@ -114,7 +114,6 @@ export function computeBarycenterTieredPositions(
   const tierTop: string[] = [];
   const tierBottom: string[] = [];
 
-  // Đưa các đỉnh thuộc cặp/đường đi đang chọn về trung tâm của tầng trên và tầng dưới
   customers.forEach((c, idx) => {
     if (predSources.has(c.id) && !predTargets.has(c.id)) {
       tierTop.push(c.id);
@@ -134,7 +133,6 @@ export function computeBarycenterTieredPositions(
     tierBottom,
   ].filter((t) => t.length > 0);
 
-  // Khởi tạo tọa độ X ban đầu (ưu tiên đỉnh đang chọn nằm gần tâm x = 0)
   const xOrder = new Map<string, number>();
   for (const tier of tiers) {
     tier.sort((a, b) => {
@@ -148,7 +146,6 @@ export function computeBarycenterTieredPositions(
     tier.forEach((id, idx) => xOrder.set(id, idx));
   }
 
-  // Lặp 4 lượt Barycenter (trên-xuống & dưới-lên) để gỡ chéo cạnh
   for (let iter = 0; iter < 4; iter += 1) {
     for (let t = 1; t < tiers.length; t += 1) {
       const tier = tiers[t];
@@ -187,12 +184,22 @@ export function computeBarycenterTieredPositions(
     }
   }
 
-  const X_GAP = 115;
+  const X_GAP = 120;
   const Y_GAP = 120;
-  const totalHeight = (tiers.length - 1) * Y_GAP;
+  const MAX_PER_ROW = 8;
+
+  // Ngắt tầng dài thành nhiều hàng (giữ nguyên thứ tự Barycenter) để đồ thị không bị kéo giãn theo chiều ngang
+  const rows: string[][] = [];
+  for (const tier of tiers) {
+    for (let i = 0; i < tier.length; i += MAX_PER_ROW) {
+      rows.push(tier.slice(i, i + MAX_PER_ROW));
+    }
+  }
+
+  const totalHeight = (rows.length - 1) * Y_GAP;
   const startY = -totalHeight / 2;
 
-  tiers.forEach((tier, rowIdx) => {
+  rows.forEach((tier, rowIdx) => {
     const rowWidth = (tier.length - 1) * X_GAP;
     const startX = -rowWidth / 2;
     const y = startY + rowIdx * Y_GAP;
@@ -206,6 +213,74 @@ export function computeBarycenterTieredPositions(
   });
 
   return positions;
+}
+
+/**
+ * Hậu xử lý chống chồng lấp sau COSE:
+ * Đẩy các cặp đỉnh bị xếp quá gần nhau (đặc biệt là các đỉnh thuộc Bridge Path đang chọn)
+ * để nhãn đỉnh và nhãn cạnh nằm ngang (`OWNS`, `USES_DEVICE`, `99.9%`) luôn có đủ khoảng trống.
+ */
+function enforceMinNodeDistance(
+  cy: Core,
+  visibleEls: CollectionReturnValue,
+  focusNodeIds: Set<string>
+): void {
+  const nodes = visibleEls.nodes().toArray();
+  if (nodes.length <= 1) return;
+
+  const coords = nodes.map((n) => ({
+    node: n,
+    id: n.id(),
+    isFocus: focusNodeIds.has(n.id()),
+    x: n.position("x"),
+    y: n.position("y"),
+  }));
+
+  const BASE_MIN_DIST = 82;
+  const FOCUS_MIN_DIST = 122;
+
+  for (let iter = 0; iter < 14; iter += 1) {
+    let moved = false;
+    for (let i = 0; i < coords.length; i += 1) {
+      for (let j = i + 1; j < coords.length; j += 1) {
+        const a = coords[i];
+        const b = coords[j];
+        const minDist =
+          a.isFocus || b.isFocus ? FOCUS_MIN_DIST : BASE_MIN_DIST;
+
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dist = Math.hypot(dx, dy);
+
+        if (dist < 1) {
+          dx = (i - j) * 5;
+          dy = ((i + j) % 2 === 0 ? 1 : -1) * 5;
+          dist = Math.hypot(dx, dy);
+        }
+
+        if (dist < minDist) {
+          const push = ((minDist - dist) / dist) * 0.52;
+          const ox = dx * push;
+          const oy = dy * push;
+          a.x -= ox;
+          a.y -= oy;
+          b.x += ox;
+          b.y += oy;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  cy.batch(() => {
+    for (const item of coords) {
+      item.node.position({
+        x: Math.round(item.x),
+        y: Math.round(item.y),
+      });
+    }
+  });
 }
 
 /**
@@ -266,7 +341,7 @@ export function applyGraphLayout(
       animationDuration: 260,
       fit: true,
       padding: 40,
-      minNodeSpacing: 32,
+      minNodeSpacing: 36,
       avoidOverlap: true,
       concentric: (node: NodeSingular) =>
         100 - (hopMap.get(node.id()) ?? 3) * 25,
@@ -294,19 +369,24 @@ export function applyGraphLayout(
     return;
   }
 
-  // COSE gọn & thoáng theo thông số chuẩn
+  // COSE gọn & thoáng theo thông số chuẩn + cạnh nối đỉnh trọng tâm dài hơn (150px)
   const layout = visibleEls.layout({
     name: "cose",
     animate: false,
     fit: true,
     padding: 40,
-    nodeRepulsion: () => 20000,
-    idealEdgeLength: () => 90,
-    gravity: 1.2,
-    componentSpacing: 60,
-    nodeOverlap: 20,
+    nodeRepulsion: () => 32000,
+    idealEdgeLength: (edge: EdgeSingular) =>
+      focusNodeIds.has(edge.source().id()) ||
+      focusNodeIds.has(edge.target().id())
+        ? 150
+        : 95,
+    gravity: 1.0,
+    componentSpacing: 65,
+    nodeOverlap: 24,
     numIter: 1500,
   });
   layout.run();
+  enforceMinNodeDistance(cy, visibleEls, focusNodeIds);
   cy.fit(visibleEls, 40);
 }
