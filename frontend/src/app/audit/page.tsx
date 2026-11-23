@@ -1,40 +1,60 @@
 "use client";
 
 /**
- * MÀN HÌNH 4 (M4 - Việt): Nhật ký Điều tra (Human-in-the-Loop) & Xuất Báo cáo (/audit)
- * Tinh chỉnh theo review lần 2:
- * 1. Dùng chung `formatDateVi` chuẩn múi giờ Asia/Ho_Chi_Minh (hết lệch 7 tiếng).
- * 2. Làm rõ phạm vi Xuất CSV / Xuất JSON:
- *    - Nếu bộ lọc đang là "Tất cả vụ án" (`ALL`), hiển thị rõ "Phạm vi xuất: Tất cả vụ án"
- *      và xuất trực tiếp toàn bộ danh sách quyết định thẩm định & nhật ký sự kiện đang hiển thị.
- *    - Nếu đã chọn 1 vụ án cụ thể, xuất hồ sơ vụ án đó trực tiếp từ Backend (`getExportUrl`).
+ * Màn hình 4 — Nhật ký & báo cáo (/audit)
+ * Một nút "Xuất báo cáo" (CSV / JSON / In), dải thống kê, thanh lọc (vụ án, thời gian, quyết định, mã KH),
+ * 2 tab: quyết định thẩm định (bảng) và nhật ký hệ thống (timeline). Có header riêng cho bản in.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  AlertCircle,
-  CheckCircle2,
+  ArrowUpRight,
+  Check,
   ChevronDown,
-  ChevronUp,
+  ClipboardCheck,
+  Cpu,
   Download,
   FileJson,
   FileSpreadsheet,
-  Filter,
+  FileText,
+  Inbox,
   Printer,
   RefreshCw,
+  RotateCcw,
   ScrollText,
-  XCircle,
+  Search,
+  UploadCloud,
+  X,
+  type LucideIcon,
 } from "lucide-react";
 import { fetchAuditLogs, fetchCases, getExportUrl } from "@/lib/api";
-import type {
-  AuditTrailResponse,
-  CaseSummary,
-  FeedbackAction,
-} from "@/types/contract";
-import { ActionBadge, Badge } from "@/components/ui/Badge";
-import { formatDateVi, formatPercent } from "@/lib/format";
+import type { AuditLogItem, AuditTrailResponse, CaseSummary, FeedbackAction } from "@/types/contract";
+import { ActionBadge, Badge, type BadgeVariant } from "@/components/ui/Badge";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Card, EmptyState, PageContainer, PageHeader, Skeleton, StatStrip, StatTile } from "@/components/ui/Card";
+import { Input, Select } from "@/components/ui/Field";
+import { FilterChip, SegmentedControl, Tabs } from "@/components/ui/Tabs";
+import { DropdownMenu } from "@/components/ui/DropdownMenu";
+import { Table, TableContainer, THead, Th, Td, Tr } from "@/components/ui/Table";
+import { Alert } from "@/components/ui/Alert";
+import { workspaceHref } from "@/components/cases/CaseCard";
+import { ACTION_LABEL, eventTypeLabel, shortModelLabel } from "@/lib/i18n/labels";
+import { formatDateVi, formatPercent, parseServerDate } from "@/lib/format";
+import { cn } from "@/lib/cn";
 
+type AuditTab = "verdicts" | "logs";
 type ActionFilter = "ALL" | FeedbackAction;
+type TimeRange = "ALL" | "7D" | "TODAY";
+
+const TIME_RANGE_LABEL: Record<TimeRange, string> = { ALL: "Mọi thời điểm", "7D": "7 ngày qua", TODAY: "Hôm nay" };
+
+const EVENT_STYLE: Record<string, { icon: LucideIcon; variant: BadgeVariant }> = {
+  FEEDBACK: { icon: ClipboardCheck, variant: "danger" },
+  UPLOAD: { icon: UploadCloud, variant: "neutral" },
+  PREDICT: { icon: Cpu, variant: "primary" },
+  EXPORT: { icon: Download, variant: "neutral" },
+};
 
 function parsePayloadChips(payloadJson: string): Array<{ k: string; v: string }> {
   try {
@@ -45,10 +65,7 @@ function parsePayloadChips(payloadJson: string): Array<{ k: string; v: string }>
       if (typeof val === "number") {
         chips.push({
           k: key,
-          v:
-            key === "score" || key === "predicted_score"
-              ? formatPercent(val, 1)
-              : String(Number(val.toFixed(4))),
+          v: key === "score" || key === "predicted_score" ? formatPercent(val, 1) : String(Number(val.toFixed(4))),
         });
       } else if (typeof val === "string" || typeof val === "boolean") {
         chips.push({ k: key, v: String(val) });
@@ -60,12 +77,93 @@ function parsePayloadChips(payloadJson: string): Array<{ k: string; v: string }>
   }
 }
 
+function inTimeRange(ts: string, range: TimeRange): boolean {
+  if (range === "ALL") return true;
+  const d = parseServerDate(ts);
+  if (!d) return true;
+  const now = new Date();
+  if (range === "7D") return now.getTime() - d.getTime() <= 7 * 24 * 3600 * 1000;
+  const fmt = (x: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(x);
+  return fmt(d) === fmt(now);
+}
+
+function prettyJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw || "{}"), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+function downloadBlob(content: string, type: string, filename: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function LogItem({ log, caseTitle }: { log: AuditLogItem; caseTitle: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const chips = parsePayloadChips(log.payload_json);
+  const style = EVENT_STYLE[log.event_type] ?? { icon: ScrollText, variant: "neutral" as BadgeVariant };
+  const Icon = style.icon;
+
+  return (
+    <li className="relative flex gap-4 px-5 py-4">
+      <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted">
+        <Icon className="h-4 w-4" aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant={style.variant}>{eventTypeLabel(log.event_type)}</Badge>
+            <span className="truncate text-base font-medium text-fg">{caseTitle}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <time className="num text-sm text-muted">{formatDateVi(log.created_at)}</time>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="no-print"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((v) => !v)}
+            >
+              JSON
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")} aria-hidden />
+            </Button>
+          </div>
+        </div>
+        {chips.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5">
+            {chips.map((c) => (
+              <li key={c.k} className="inline-flex items-center gap-1 rounded-md bg-subtle px-2 py-0.5 font-mono text-xs">
+                <span className="text-muted">{c.k}</span>
+                <span className="font-medium text-fg">{c.v}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {expanded && (
+          <pre className="scrollbar-thin overflow-x-auto rounded-lg bg-fg p-3 font-mono text-xs text-white">
+            {prettyJson(log.payload_json)}
+          </pre>
+        )}
+      </div>
+    </li>
+  );
+}
+
 export default function AuditPage() {
+  const router = useRouter();
   const [audit, setAudit] = useState<AuditTrailResponse | null>(null);
   const [cases, setCases] = useState<CaseSummary[]>([]);
-  const [selectedCaseId, setSelectedCaseId] = useState<string>("ALL");
+  const [tab, setTab] = useState<AuditTab>("verdicts");
+  const [selectedCaseId, setSelectedCaseId] = useState("ALL");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
-  const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set());
+  const [timeRange, setTimeRange] = useState<TimeRange>("ALL");
+  const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,466 +178,341 @@ export default function AuditPage() {
       setAudit(auditRes);
       setCases(casesRes.cases);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Không thể tải dữ liệu Nhật ký Điều tra từ Backend."
-      );
+      setError(err instanceof Error ? err.message : "Không thể tải nhật ký điều tra từ backend.");
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadData(selectedCaseId);
+    void loadData(selectedCaseId);
   }, [selectedCaseId, loadData]);
 
-  const caseTitleMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of cases) {
-      map.set(c.case_id, c.title);
-    }
-    return map;
+  const caseTitle = useMemo(() => {
+    const map = new Map(cases.map((c) => [c.case_id, c.title]));
+    return (id: string) => map.get(id) ?? id;
   }, [cases]);
 
-  const filteredFeedbacks = useMemo(() => {
-    const list = audit?.feedbacks ?? [];
-    if (actionFilter === "ALL") return list;
-    return list.filter((fb) => fb.action === actionFilter);
-  }, [audit, actionFilter]);
+  // Lọc theo thời gian + mã KH áp dụng cho cả thống kê lẫn bảng; lọc quyết định chỉ áp dụng cho bảng
+  const scopedFeedbacks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (audit?.feedbacks ?? []).filter(
+      (fb) =>
+        inTimeRange(fb.updated_at, timeRange) &&
+        (!q || fb.source_cust_id.toLowerCase().includes(q) || fb.target_cust_id.toLowerCase().includes(q))
+    );
+  }, [audit, timeRange, query]);
+
+  const feedbacks = useMemo(
+    () => (actionFilter === "ALL" ? scopedFeedbacks : scopedFeedbacks.filter((fb) => fb.action === actionFilter)),
+    [scopedFeedbacks, actionFilter]
+  );
+
+  const logs = useMemo(
+    () => (audit?.audit_logs ?? []).filter((l) => inTimeRange(l.created_at, timeRange)),
+    [audit, timeRange]
+  );
 
   const summary = useMemo(() => {
-    const list = audit?.feedbacks ?? [];
     let confirmed = 0;
     let dismissed = 0;
-    for (const fb of list) {
+    for (const fb of scopedFeedbacks) {
       if (fb.action === "CONFIRM") confirmed += 1;
-      else if (fb.action === "DISMISS") dismissed += 1;
+      else dismissed += 1;
     }
-    return { total: list.length, confirmed, dismissed };
-  }, [audit]);
+    return { total: scopedFeedbacks.length, confirmed, dismissed };
+  }, [scopedFeedbacks]);
 
-  const toggleExpandLog = (id: number) => {
-    setExpandedLogIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  // Xuất CSV/JSON cho "Tất cả vụ án" (khi bộ lọc là ALL) hoặc tải hồ sơ vụ án cụ thể từ Backend
-  const handleExportAllClient = (format: "csv" | "json") => {
+  const exportClient = (format: "csv" | "json") => {
     if (format === "json") {
-      const payload = {
-        scope: "ALL_CASES",
-        action_filter: actionFilter,
-        exported_at: formatDateVi(new Date().toISOString()),
-        feedbacks: filteredFeedbacks,
-        audit_logs: audit?.audit_logs ?? [],
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json;charset=utf-8",
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "ausaml_audit_all_cases.json";
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(
+        JSON.stringify(
+          {
+            scope: selectedCaseId === "ALL" ? "ALL_CASES" : selectedCaseId,
+            action_filter: actionFilter,
+            time_range: timeRange,
+            exported_at: formatDateVi(new Date().toISOString()),
+            feedbacks,
+            audit_logs: logs,
+          },
+          null,
+          2
+        ),
+        "application/json;charset=utf-8",
+        "ausaml_audit_all_cases.json"
+      );
       return;
     }
-
-    const headers = [
-      "case_id",
-      "case_title",
-      "pair_id",
-      "source_cust_id",
-      "target_cust_id",
-      "model_id",
-      "predicted_score",
-      "action",
-      "note",
-      "reviewer_name",
-      "updated_at_vn",
-    ];
-    const rows = filteredFeedbacks.map((fb) => [
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const headers = ["case_id", "case_title", "pair_id", "source_cust_id", "target_cust_id", "model_id", "predicted_score", "action", "note", "reviewer_name", "updated_at_vn"];
+    const rows = feedbacks.map((fb) => [
       fb.case_id,
-      `"${(caseTitleMap.get(fb.case_id) ?? fb.case_id).replace(/"/g, '""')}"`,
+      esc(caseTitle(fb.case_id)),
       fb.pair_id,
       fb.source_cust_id,
       fb.target_cust_id,
       fb.model_id,
       fb.predicted_score.toFixed(4),
       fb.action,
-      `"${(fb.note || "").replace(/"/g, '""')}"`,
+      esc(fb.note || ""),
       fb.reviewer_name,
-      `"${formatDateVi(fb.updated_at)}"`,
+      esc(formatDateVi(fb.updated_at)),
     ]);
-    const csvContent =
-      "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "ausaml_audit_all_cases.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(
+      "﻿" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n"),
+      "text/csv;charset=utf-8",
+      "ausaml_audit_all_cases.csv"
+    );
   };
 
-  const exportScopeLabel =
-    selectedCaseId === "ALL"
-      ? `Tất cả vụ án (${filteredFeedbacks.length} quyết định)`
-      : caseTitleMap.get(selectedCaseId) ?? selectedCaseId;
+  const isAllCases = selectedCaseId === "ALL";
+  const hasFilters = actionFilter !== "ALL" || timeRange !== "ALL" || query.trim() !== "";
+  const resetFilters = () => {
+    setActionFilter("ALL");
+    setTimeRange("ALL");
+    setQuery("");
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Header + Action Buttons */}
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            Nhật ký Điều tra & Xuất Hồ sơ Báo cáo
-          </h1>
-          <p className="text-sm text-slate-600 mt-1">
-            Lưu vết toàn bộ quyết định thẩm định (CONFIRM / DISMISS) của điều tra viên và lịch sử chạy mô hình trong SQLite DB (Múi giờ: Asia/Ho_Chi_Minh).
-          </p>
+    <PageContainer>
+      {/* Header riêng cho bản in */}
+      <div className="print-only space-y-1 border-b border-line pb-4">
+        <p className="text-xl font-semibold">Hồ sơ điều tra AML — AusAML DSS</p>
+        <p className="text-sm">
+          Xuất lúc {formatDateVi(new Date().toISOString())} · Phạm vi: {isAllCases ? "tất cả vụ án" : caseTitle(selectedCaseId)} ·{" "}
+          {TIME_RANGE_LABEL[timeRange]} · Quyết định: {actionFilter === "ALL" ? "tất cả" : ACTION_LABEL[actionFilter]}
+        </p>
+      </div>
+
+      <PageHeader
+        title="Nhật ký & báo cáo"
+        description="Theo dõi quyết định thẩm định của điều tra viên và xuất hồ sơ báo cáo (giờ Việt Nam)."
+        actions={
+          <DropdownMenu
+            trigger={(props) => (
+              <Button {...props} variant="primary" leftIcon={Download} rightIcon={ChevronDown}>
+                Xuất báo cáo
+              </Button>
+            )}
+            items={[
+              isAllCases
+                ? { key: "csv", label: "Bảng tính CSV", icon: FileSpreadsheet, hint: ".csv", onSelect: () => exportClient("csv") }
+                : { key: "csv", label: "Bảng tính CSV", icon: FileSpreadsheet, hint: ".csv", href: getExportUrl(selectedCaseId, "csv") },
+              isAllCases
+                ? { key: "json", label: "Dữ liệu JSON", icon: FileJson, hint: ".json", onSelect: () => exportClient("json") }
+                : { key: "json", label: "Dữ liệu JSON", icon: FileJson, hint: ".json", href: getExportUrl(selectedCaseId, "json") },
+              { key: "print", label: "In / lưu PDF", icon: Printer, onSelect: () => window.print() },
+            ]}
+          />
+        }
+      />
+
+      {error && (
+        <Alert
+          tone="danger"
+          title="Không tải được nhật ký"
+          action={
+            <Button size="sm" variant="secondary" leftIcon={RotateCcw} onClick={() => void loadData(selectedCaseId)}>
+              Thử lại
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
+      )}
+
+      <StatStrip>
+        <StatTile label="Tổng lượt thẩm định" value={isLoading ? <Skeleton className="h-8 w-12" /> : summary.total} icon={FileText} />
+        <StatTile label="Xác nhận đồng phạm" value={isLoading ? <Skeleton className="h-8 w-12" /> : summary.confirmed} tone={summary.confirmed > 0 ? "danger" : "default"} icon={Check} />
+        <StatTile label="Bác bỏ cảnh báo" value={isLoading ? <Skeleton className="h-8 w-12" /> : summary.dismissed} tone="muted" icon={X} />
+      </StatStrip>
+
+      <section className="space-y-4">
+        <div className="no-print flex items-end justify-between gap-4 border-b border-line">
+          <Tabs<AuditTab>
+            ariaLabel="Loại nhật ký"
+            idPrefix="audit"
+            value={tab}
+            onChange={setTab}
+            className="border-b-0"
+            options={[
+              { value: "verdicts", label: "Quyết định thẩm định", count: feedbacks.length },
+              { value: "logs", label: "Nhật ký hệ thống", count: logs.length },
+            ]}
+          />
+          <div className="flex items-center gap-1 pb-1.5">
+            {hasFilters && (
+              <Button size="sm" variant="ghost" onClick={resetFilters}>
+                Xóa bộ lọc
+              </Button>
+            )}
+            <IconButton
+              label="Làm mới dữ liệu"
+              icon={RefreshCw}
+              size="sm"
+              disabled={isLoading}
+              onClick={() => void loadData(selectedCaseId)}
+              className={cn(isLoading && "[&>svg]:animate-spin")}
+            />
+          </div>
         </div>
 
-        <div className="no-print flex flex-wrap items-center gap-2">
-          {selectedCaseId === "ALL" ? (
-            <>
-              <button
-                type="button"
-                onClick={() => handleExportAllClient("csv")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors shadow-sm"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Xuất CSV (Tất cả vụ án)</span>
-                <Download className="w-3.5 h-3.5 opacity-75" />
-              </button>
+        {/* Thanh lọc */}
+        <div className="no-print flex flex-wrap items-center gap-3">
+          <Select
+            aria-label="Lọc theo vụ án"
+            value={selectedCaseId}
+            onChange={(e) => setSelectedCaseId(e.target.value)}
+            className="w-full sm:w-64"
+          >
+            <option value="ALL">Tất cả vụ án</option>
+            {cases.map((c) => (
+              <option key={c.case_id} value={c.case_id}>
+                {c.title}
+              </option>
+            ))}
+          </Select>
 
-              <button
-                type="button"
-                onClick={() => handleExportAllClient("json")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                <FileJson className="w-4 h-4" />
-                <span>Xuất JSON (Tất cả vụ án)</span>
-                <Download className="w-3.5 h-3.5 opacity-75" />
-              </button>
-            </>
-          ) : (
-            <>
-              <a
-                href={getExportUrl(selectedCaseId, "csv")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors shadow-sm"
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Xuất CSV (Vụ án đang chọn)</span>
-                <Download className="w-3.5 h-3.5 opacity-75" />
-              </a>
+          <SegmentedControl<TimeRange>
+            ariaLabel="Khoảng thời gian"
+            size="md"
+            value={timeRange}
+            onChange={setTimeRange}
+            options={[
+              { value: "ALL", label: "Tất cả" },
+              { value: "7D", label: "7 ngày" },
+              { value: "TODAY", label: "Hôm nay" },
+            ]}
+          />
 
-              <a
-                href={getExportUrl(selectedCaseId, "json")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                <FileJson className="w-4 h-4" />
-                <span>Xuất JSON (Vụ án đang chọn)</span>
-                <Download className="w-3.5 h-3.5 opacity-75" />
-              </a>
+          {tab === "verdicts" && (
+            <>
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Lọc theo quyết định">
+                {(["ALL", "CONFIRM", "DISMISS"] as ActionFilter[]).map((act) => (
+                  <FilterChip key={act} selected={actionFilter === act} onClick={() => setActionFilter(act)}>
+                    {act === "ALL" ? "Mọi quyết định" : ACTION_LABEL[act]}
+                  </FilterChip>
+                ))}
+              </div>
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Tìm mã khách hàng…"
+                aria-label="Tìm theo mã khách hàng"
+                leftIcon={<Search className="h-4 w-4" aria-hidden />}
+                className="w-full sm:w-56"
+              />
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 transition-colors"
-          >
-            <Printer className="w-4 h-4" />
-            <span>In Báo cáo (Print Dossier)</span>
-          </button>
-        </div>
-      </header>
-
-      {error && (
-        <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* KPI Strip */}
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4 num">
-        <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-sm">
-          <div className="text-xs text-slate-600 font-semibold">
-            Tổng lượt thẩm định đã lưu
-          </div>
-          <div className="text-2xl font-bold text-slate-900 mt-1">
-            {summary.total}
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-red-200 p-4 shadow-sm">
-          <div className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            Đã xác nhận Đồng phạm (CONFIRM)
-          </div>
-          <div className="text-2xl font-bold text-red-700 mt-1">
-            {summary.confirmed}
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-sm">
-          <div className="text-xs text-slate-600 font-semibold flex items-center gap-1.5">
-            <XCircle className="w-3.5 h-3.5" />
-            Đã bác bỏ cảnh báo (DISMISS)
-          </div>
-          <div className="text-2xl font-bold text-slate-700 mt-1">
-            {summary.dismissed}
-          </div>
-        </div>
-      </section>
-
-      {/* Filter Bar */}
-      <section className="no-print bg-white rounded-xl border border-slate-200/90 p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-500" />
-            <label className="text-xs font-semibold text-slate-700">Vụ án:</label>
-            <select
-              value={selectedCaseId}
-              onChange={(e) => setSelectedCaseId(e.target.value)}
-              className="border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="ALL">Tất cả vụ án</option>
-              {cases.map((c) => (
-                <option key={c.case_id} value={c.case_id}>
-                  {c.title} ({c.case_id})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-1 text-xs">
-            {(["ALL", "CONFIRM", "DISMISS"] as ActionFilter[]).map((act) => {
-              const active = actionFilter === act;
-              return (
-                <button
-                  key={act}
-                  type="button"
-                  onClick={() => setActionFilter(act)}
-                  className={`px-2.5 py-1 rounded-lg border transition-colors ${
-                    active
-                      ? "bg-slate-900 text-white border-slate-900 font-medium"
-                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  {act === "ALL" ? "Tất cả quyết định" : act}
-                </button>
-              );
-            })}
-          </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-slate-600">
-          <span>
-            Phạm vi xuất CSV/JSON:{" "}
-            <b className="text-slate-900">{exportScopeLabel}</b>
-          </span>
-          <button
-            type="button"
-            onClick={() => loadData(selectedCaseId)}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`}
-            />
-            Làm mới
-          </button>
-        </div>
-      </section>
-
-      {/* Feedbacks Table */}
-      <section className="bg-white rounded-xl border border-slate-200/90 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <h2 className="font-semibold text-slate-900 text-sm">
-              Danh sách Quyết định Thẩm định của Điều tra viên ({filteredFeedbacks.length})
-            </h2>
-            <p className="text-[11px] text-slate-600">
-              Dữ liệu đồng bộ hai chiều với trạng thái cạnh trên Phòng Điều Tra (/workspace)
-            </p>
-          </div>
-        </div>
-
-        {isLoading ? (
-          <div className="p-8 text-center text-xs text-slate-500">
-            Đang tải nhật ký phản hồi...
-          </div>
-        ) : filteredFeedbacks.length === 0 ? (
-          <div className="p-8 text-center text-xs text-slate-500">
-            Chưa có phản hồi nào phù hợp bộ lọc. Hãy vào{" "}
-            <b className="text-slate-700">Phòng Điều Tra (/workspace)</b> để bấm{" "}
-            <b>CONFIRM</b> hoặc <b>DISMISS</b> các cặp nghi vấn.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left border-collapse num">
-              <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                <tr>
-                  <th className="py-2.5 px-4 font-semibold">Hồ sơ Vụ án</th>
-                  <th className="py-2.5 px-3 font-semibold">Cặp Khách hàng</th>
-                  <th className="py-2.5 px-3 font-semibold">Mô hình</th>
-                  <th className="py-2.5 px-3 font-semibold text-right">Xác suất AI</th>
-                  <th className="py-2.5 px-3 font-semibold text-center">Quyết định</th>
-                  <th className="py-2.5 px-3 font-semibold">Ghi chú Bằng chứng</th>
-                  <th className="py-2.5 px-3 font-semibold">Điều tra viên</th>
-                  <th className="py-2.5 px-4 font-semibold text-right">Thời gian (VN)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredFeedbacks.map((fb) => {
-                  const readableTitle = caseTitleMap.get(fb.case_id);
-                  return (
-                    <tr key={fb.id} className="hover:bg-slate-50/80">
-                      <td className="py-2.5 px-4">
-                        <div className="font-medium text-slate-900">
-                          {readableTitle ?? fb.case_id}
-                        </div>
-                        {readableTitle && (
-                          <div className="font-mono text-[10px] text-slate-500">
-                            {fb.case_id}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-semibold text-slate-900 whitespace-nowrap">
-                        {fb.source_cust_id} ↔ {fb.target_cust_id}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-slate-700 whitespace-nowrap">
-                        {fb.model_id}
-                      </td>
-                      <td className="py-2.5 px-3 font-mono text-right font-semibold text-slate-900">
-                        {formatPercent(fb.predicted_score, 1)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                        <ActionBadge action={fb.action} />
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-700 max-w-xs">
-                        {fb.note || (
-                          <span className="text-slate-400 italic">—</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-700 whitespace-nowrap">
-                        {fb.reviewer_name}
-                      </td>
-                      <td className="py-2.5 px-4 text-right text-slate-600 whitespace-nowrap">
-                        {formatDateVi(fb.updated_at)}
-                      </td>
+        {tab === "verdicts" ? (
+          <Card className="overflow-hidden">
+            {isLoading ? (
+              <div className="space-y-2 p-5">
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
+                ))}
+              </div>
+            ) : feedbacks.length === 0 ? (
+              <EmptyState
+                icon={Inbox}
+                title={hasFilters ? "Không có quyết định phù hợp bộ lọc" : "Chưa có quyết định thẩm định"}
+                description={
+                  hasFilters
+                    ? "Thử nới rộng khoảng thời gian hoặc xóa bộ lọc."
+                    : "Mở phòng điều tra đồ thị để xác nhận hoặc bác bỏ các cặp nghi vấn."
+                }
+                action={
+                  hasFilters ? (
+                    <Button size="sm" variant="secondary" onClick={resetFilters}>
+                      Xóa bộ lọc
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" rightIcon={ArrowUpRight} onClick={() => router.push("/workspace")}>
+                      Mở phòng điều tra
+                    </Button>
+                  )
+                }
+              />
+            ) : (
+              <TableContainer>
+                <Table>
+                  <THead sticky={false}>
+                    <tr>
+                      <Th>Thời gian</Th>
+                      <Th>Vụ án</Th>
+                      <Th>Cặp khách hàng</Th>
+                      <Th>Mô hình</Th>
+                      <Th align="right">Xác suất</Th>
+                      <Th>Quyết định</Th>
+                      <Th>Ghi chú</Th>
+                      <Th className="no-print">
+                        <span className="sr-only">Mở lại</span>
+                      </Th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Audit Logs Trail */}
-      <section className="bg-white rounded-xl border border-slate-200/90 shadow-sm overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
-          <ScrollText className="w-4 h-4 text-slate-600" />
-          <div>
-            <h2 className="font-semibold text-slate-900 text-sm">
-              Nhật ký Sự kiện Hệ thống ({audit?.audit_logs.length ?? 0})
-            </h2>
-            <p className="text-[11px] text-slate-600">
-              Lưu vết tự động mọi phiên chạy suy luận (PREDICT), tải vụ án (UPLOAD) và thẩm định (FEEDBACK)
-            </p>
-          </div>
-        </div>
-
-        {(audit?.audit_logs.length ?? 0) === 0 ? (
-          <div className="p-6 text-center text-xs text-slate-500">
-            Chưa có sự kiện hệ thống nào được ghi nhận.
-          </div>
+                  </THead>
+                  <tbody>
+                    {feedbacks.map((fb) => (
+                      <Tr
+                        key={fb.id}
+                        onSelect={() => router.push(workspaceHref(fb.case_id, fb.pair_id))}
+                        title="Mở lại cặp này trên đồ thị"
+                      >
+                        <Td className="num whitespace-nowrap text-muted">{formatDateVi(fb.updated_at)}</Td>
+                        <Td className="max-w-[220px]">
+                          <span className="block truncate" title={caseTitle(fb.case_id)}>
+                            {caseTitle(fb.case_id)}
+                          </span>
+                        </Td>
+                        <Td className="whitespace-nowrap font-mono">
+                          {fb.source_cust_id} <span className="text-faint">↔</span> {fb.target_cust_id}
+                        </Td>
+                        <Td className="whitespace-nowrap text-fg-secondary">{shortModelLabel(fb.model_id)}</Td>
+                        <Td numeric className="font-medium">{formatPercent(fb.predicted_score, 1)}</Td>
+                        <Td>
+                          <ActionBadge action={fb.action} />
+                        </Td>
+                        <Td className="max-w-xs">
+                          {fb.note ? (
+                            <span className="block truncate text-fg-secondary" title={fb.note}>
+                              {fb.note}
+                            </span>
+                          ) : (
+                            <span className="text-faint">—</span>
+                          )}
+                        </Td>
+                        <Td align="right" className="no-print">
+                          <ArrowUpRight className="ml-auto h-4 w-4 text-muted" aria-hidden />
+                        </Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </TableContainer>
+            )}
+          </Card>
         ) : (
-          <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto text-xs num">
-            {audit?.audit_logs.map((log) => {
-              const chips = parsePayloadChips(log.payload_json);
-              const isExpanded = expandedLogIds.has(log.id);
-              const readableTitle = caseTitleMap.get(log.case_id);
-
-              return (
-                <div
-                  key={log.id}
-                  className="px-4 py-3 space-y-1.5 hover:bg-slate-50/80"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge
-                        variant={
-                          log.event_type === "FEEDBACK"
-                            ? "danger"
-                            : log.event_type === "UPLOAD"
-                            ? "purple"
-                            : "info"
-                        }
-                      >
-                        {log.event_type}
-                      </Badge>
-                      <span className="font-semibold text-slate-900">
-                        {readableTitle ?? log.case_id}
-                      </span>
-                      {readableTitle && (
-                        <span className="font-mono text-[11px] text-slate-500">
-                          ({log.case_id})
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-600 whitespace-nowrap">
-                        {formatDateVi(log.created_at)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleExpandLog(log.id)}
-                        className="no-print inline-flex items-center gap-0.5 px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] text-slate-600 hover:bg-slate-100"
-                      >
-                        <span>JSON</span>
-                        {isExpanded ? (
-                          <ChevronUp className="w-3 h-3" />
-                        ) : (
-                          <ChevronDown className="w-3 h-3" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {chips.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      {chips.map((c) => (
-                        <span
-                          key={`${log.id}-${c.k}`}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono text-[11px]"
-                        >
-                          <span className="text-slate-500">{c.k}:</span>
-                          <b className="text-slate-900">{c.v}</b>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {isExpanded && (
-                    <pre className="p-2.5 rounded-lg bg-slate-900 text-slate-100 font-mono text-[11px] overflow-x-auto">
-                      {log.payload_json}
-                    </pre>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <Card className="overflow-hidden">
+            {isLoading ? (
+              <div className="space-y-3 p-5">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-14 w-full" />
+                ))}
+              </div>
+            ) : logs.length === 0 ? (
+              <EmptyState icon={ScrollText} title="Chưa có sự kiện hệ thống" description="Các lần tải lên, suy luận, thẩm định và xuất báo cáo sẽ xuất hiện tại đây." />
+            ) : (
+              <ol className="scrollbar-thin relative max-h-[640px] divide-y divide-line overflow-y-auto before:absolute before:bottom-0 before:left-[35px] before:top-0 before:w-px before:bg-line">
+                {logs.map((log) => (
+                  <LogItem key={log.id} log={log} caseTitle={caseTitle(log.case_id)} />
+                ))}
+              </ol>
+            )}
+          </Card>
         )}
       </section>
-    </div>
+    </PageContainer>
   );
 }

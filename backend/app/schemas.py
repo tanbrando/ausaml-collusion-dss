@@ -215,12 +215,20 @@ class PredictedLinkItem(BaseModel):
     explanation_vi: str
 
 
+class EntityAttributeItem(BaseModel):
+    label: str
+    value: str
+    tone: Literal["neutral", "info", "warning", "danger", "success"] = "neutral"
+
+
 class CytoscapeNodeData(BaseModel):
     id: str
     label: str
     node_type: NodeType
     risk_score: Optional[float] = None
     is_target: bool = False
+    subtitle: Optional[str] = None
+    attributes: List[EntityAttributeItem] = Field(default_factory=list)
 
 
 class CytoscapeNode(BaseModel):
@@ -237,6 +245,8 @@ class CytoscapeEdgeData(BaseModel):
     risk_level: Optional[RiskLevel] = None
     pair_id: Optional[str] = None
     feedback_status: Optional[FeedbackStatus] = None
+    detail_label: Optional[str] = None
+    attributes: List[EntityAttributeItem] = Field(default_factory=list)
 
 
 class CytoscapeEdge(BaseModel):

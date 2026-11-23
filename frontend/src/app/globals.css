@@ -2,54 +2,138 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens — Light theme (quy tắc A1).
+ * Giá trị là kênh RGB để Tailwind ghép được độ mờ: bg-primary/10, border-line/60...
+ * Mọi hex dùng cho Cytoscape/Recharts nằm ở src/lib/theme/colors.ts và phải khớp các giá trị dưới đây.
+ */
 :root {
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --border: #e2e8f0;
-  --text: #0f172a;
-  --muted: #475569;
+  --bg: 246 247 249;
+  --surface: 255 255 255;
+  --subtle: 241 245 249;
+  --line: 226 232 240;
+  --line-strong: 203 213 225;
 
-  --primary: #2563eb;
-  --risk-high: #dc2626;
-  --risk-medium: #d97706;
-  --risk-low: #64748b;
-  --ok: #16a34a;
+  --fg: 15 23 42;
+  --fg-secondary: 51 65 85;
+  --muted: 100 116 139;
+  --faint: 148 163 184;
 
-  --radius: 12px;
+  --primary: 37 99 235;
+  --primary-hover: 29 78 216;
+  --primary-subtle: 239 246 255;
+  --primary-fg: 29 78 216;
+
+  --danger: 220 38 38;
+  --danger-hover: 185 28 28;
+  --danger-subtle: 254 242 242;
+  --danger-fg: 185 28 28;
+
+  --warning: 217 119 6;
+  --warning-subtle: 255 251 235;
+  --warning-fg: 180 83 9;
+
+  --success: 22 163 74;
+  --success-subtle: 240 253 244;
+  --success-fg: 21 128 61;
+
+  --sidebar: 15 23 42;
+  --sidebar-hover: 30 41 59;
+  --sidebar-active: 37 99 235;
+  --sidebar-fg: 241 245 249;
+  --sidebar-muted: 148 163 184;
+  --sidebar-line: 30 41 59;
+
+  color-scheme: light;
 }
 
-/* Giữ cố định rãnh thanh cuộn để Navbar không bị nhảy ngang khi chuyển giữa các trang dài/ngắn */
-html {
-  scrollbar-gutter: stable;
+@layer base {
+  /* Giữ cố định rãnh thanh cuộn để layout không nhảy ngang khi chuyển trang dài/ngắn */
+  html {
+    scrollbar-gutter: stable;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-bg font-sans text-base text-fg antialiased;
+  }
+
+  /* Quy tắc A6: mọi phần tử tương tác có focus ring rõ ràng khi dùng bàn phím */
+  :focus-visible {
+    outline: 2px solid rgb(var(--primary));
+    outline-offset: 2px;
+  }
+
+  ::placeholder {
+    color: rgb(var(--faint));
+    opacity: 1;
+  }
+
+  ::selection {
+    background: rgb(var(--primary) / 0.18);
+  }
 }
 
-body {
-  background-color: var(--bg);
-  color: var(--text);
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+@layer utilities {
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Nền lưới chấm cho Graph Canvas */
+  .bg-dot-grid {
+    background-color: rgb(var(--bg));
+    background-image: radial-gradient(rgb(var(--line-strong)) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line-strong)) transparent;
+  }
 }
 
-.num {
-  font-variant-numeric: tabular-nums;
+/* Thanh trượt ngưỡng τ dùng accent màu primary */
+input[type="range"] {
+  accent-color: rgb(var(--primary));
 }
 
-/* Nền lưới chấm kiểu Linkurious / KeyLines cho Graph Canvas */
-.bg-dot-grid {
-  background-color: #f8fafc;
-  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-  background-size: 18px 18px;
+/* Quy tắc A6: tôn trọng người dùng giảm chuyển động */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
-/* Chuẩn in ấn hồ sơ điều tra cho trang /audit */
+/* Chuẩn in ấn hồ sơ điều tra (/audit) */
+.print-only {
+  display: none;
+}
+
 @media print {
-  nav,
-  aside,
-  .no-print {
+  .no-print,
+  [data-app-sidebar],
+  [data-app-mobilebar] {
     display: none !important;
+  }
+  .print-only {
+    display: block !important;
   }
   body {
     background: #ffffff !important;
     color: #000000 !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
   }
 }

@@ -25,17 +25,8 @@ export type FeedbackStatus = "PENDING" | "CONFIRMED" | "DISMISSED";
 
 export type InferenceMode = "subgraph" | "full_graph";
 
-export const NODE_VISUAL_STYLES: Record<
-  NodeType,
-  { labelVi: string; shape: string; color: string }
-> = {
-  customer: { labelVi: "Khách hàng", shape: "ellipse", color: "#2563eb" },
-  account: { labelVi: "Tài khoản", shape: "round-rectangle", color: "#10b981" },
-  device: { labelVi: "Thiết bị", shape: "diamond", color: "#7c3aed" },
-  ip: { labelVi: "Địa chỉ IP", shape: "hexagon", color: "#f97316" },
-  beneficiary: { labelVi: "Thụ hưởng", shape: "triangle", color: "#eab308" },
-  bank: { labelVi: "Ngân hàng", shape: "star", color: "#64748b" },
-};
+// Màu & hình dạng 6 lớp thực thể nằm ở nguồn màu duy nhất của giao diện; re-export để giữ tương thích import cũ.
+export { NODE_VISUAL_STYLES } from "@/lib/theme/colors";
 
 export function computeRiskLevel(score: number, threshold: number): RiskLevel {
   const highCutoff = Math.max(0.75, threshold + 0.2);
@@ -192,12 +183,22 @@ export interface PredictedLinkItem {
   explanation_vi: string;
 }
 
+export type AttributeTone = "neutral" | "info" | "warning" | "danger" | "success";
+
+export interface EntityAttributeItem {
+  label: string;
+  value: string;
+  tone?: AttributeTone;
+}
+
 export interface CytoscapeNodeData {
   id: string;
   label: string;
   node_type: NodeType;
   risk_score: number | null;
   is_target: boolean;
+  subtitle?: string | null;
+  attributes?: EntityAttributeItem[];
 }
 
 export interface CytoscapeEdgeData {
@@ -210,6 +211,8 @@ export interface CytoscapeEdgeData {
   risk_level: RiskLevel | null;
   pair_id: string | null;
   feedback_status: FeedbackStatus | null;
+  detail_label?: string | null;
+  attributes?: EntityAttributeItem[];
 }
 
 export interface CytoscapeGraphPayload {

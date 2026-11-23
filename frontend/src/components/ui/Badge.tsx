@@ -1,107 +1,103 @@
 /**
- * Component Badge & các Liskov wrappers (RiskBadge, StatusBadge, ActionBadge).
- * Áp dụng Open/Closed: dùng bảng ánh xạ cấu hình thay vì chuỗi if/else.
+ * Badge & các biến thể nghiệp vụ (RiskBadge, StatusBadge, ActionBadge).
+ * Màu theo nghĩa (quy tắc A1), nhãn tiếng Việt từ glossary (quy tắc A7), có icon/chấm để không phụ thuộc màu (A6).
  */
 
 import type { ReactNode } from "react";
-import type {
-  FeedbackAction,
-  FeedbackStatus,
-  RiskLevel,
-} from "@/types/contract";
+import { Check, Clock, X } from "lucide-react";
+import type { FeedbackAction, FeedbackStatus, RiskLevel } from "@/types/contract";
+import { ACTION_LABEL, RISK_LABEL, STATUS_LABEL } from "@/lib/i18n/labels";
+import { cn } from "@/lib/cn";
 
-export type BadgeVariant =
-  | "danger"
-  | "warning"
-  | "neutral"
-  | "success"
-  | "info"
-  | "purple";
+export type BadgeVariant = "neutral" | "primary" | "success" | "warning" | "danger";
 
 const VARIANT_CLASSES: Record<BadgeVariant, string> = {
-  danger: "bg-red-50 text-red-700 border-red-200",
-  warning: "bg-amber-50 text-amber-800 border-amber-200",
-  neutral: "bg-slate-100 text-slate-600 border-slate-200",
-  success: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  info: "bg-blue-50 text-blue-700 border-blue-200",
-  purple: "bg-purple-50 text-purple-700 border-purple-200",
+  neutral: "border-line bg-subtle text-fg-secondary",
+  primary: "border-primary/20 bg-primary-subtle text-primary-fg",
+  success: "border-success/25 bg-success-subtle text-success-fg",
+  warning: "border-warning/30 bg-warning-subtle text-warning-fg",
+  danger: "border-danger/25 bg-danger-subtle text-danger-fg",
 };
 
 interface BadgeProps {
-  variant: BadgeVariant;
+  variant?: BadgeVariant;
   children: ReactNode;
   className?: string;
+  title?: string;
 }
 
-export function Badge({ variant, children, className = "" }: BadgeProps) {
+export function Badge({ variant = "neutral", children, className, title }: BadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-semibold ${VARIANT_CLASSES[variant]} ${className}`}
+      title={title}
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-xs font-medium",
+        VARIANT_CLASSES[variant],
+        className
+      )}
     >
       {children}
     </span>
   );
 }
 
-const RISK_VARIANT_MAP: Record<RiskLevel, BadgeVariant> = {
+const RISK_VARIANT: Record<RiskLevel, BadgeVariant> = {
   HIGH: "danger",
   MEDIUM: "warning",
   LOW: "neutral",
 };
 
-const RISK_LABEL_VI: Record<RiskLevel, string> = {
-  HIGH: "HIGH",
-  MEDIUM: "MEDIUM",
-  LOW: "LOW",
+export const RISK_DOT: Record<RiskLevel, string> = {
+  HIGH: "bg-risk-high",
+  MEDIUM: "bg-risk-medium",
+  LOW: "bg-risk-low",
 };
 
-export function RiskBadge({
-  level,
-  suffix,
-}: {
-  level: RiskLevel;
-  suffix?: string;
-}) {
+export function RiskBadge({ level, suffix, className }: { level: RiskLevel; suffix?: string; className?: string }) {
   return (
-    <Badge variant={RISK_VARIANT_MAP[level]}>
-      <span>{RISK_LABEL_VI[level]}</span>
-      {suffix && <span className="num">· {suffix}</span>}
+    <Badge variant={RISK_VARIANT[level]} className={className}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", RISK_DOT[level])} aria-hidden />
+      <span>{RISK_LABEL[level]}</span>
+      {suffix && <span className="num font-mono">· {suffix}</span>}
     </Badge>
   );
 }
-
-const STATUS_VARIANT_MAP: Record<FeedbackStatus, BadgeVariant> = {
-  PENDING: "info",
-  CONFIRMED: "danger",
-  DISMISSED: "neutral",
-};
-
-const STATUS_LABEL_MAP: Record<FeedbackStatus, string> = {
-  PENDING: "Chờ duyệt",
-  CONFIRMED: "✓ Đồng phạm",
-  DISMISSED: "✕ Đã bác bỏ",
-};
 
 export function StatusBadge({ status }: { status: FeedbackStatus }) {
+  if (status === "CONFIRMED") {
+    return (
+      <Badge variant="danger">
+        <Check className="h-3 w-3" aria-hidden />
+        {STATUS_LABEL.CONFIRMED}
+      </Badge>
+    );
+  }
+  if (status === "DISMISSED") {
+    return (
+      <Badge variant="neutral" className="text-muted">
+        <X className="h-3 w-3" aria-hidden />
+        {STATUS_LABEL.DISMISSED}
+      </Badge>
+    );
+  }
   return (
-    <Badge
-      variant={STATUS_VARIANT_MAP[status]}
-      className={status === "DISMISSED" ? "line-through opacity-75" : ""}
-    >
-      {STATUS_LABEL_MAP[status]}
+    <Badge variant="neutral" className="border-transparent bg-transparent px-0 text-muted">
+      <Clock className="h-3 w-3" aria-hidden />
+      {STATUS_LABEL.PENDING}
     </Badge>
   );
 }
 
-const ACTION_VARIANT_MAP: Record<FeedbackAction, BadgeVariant> = {
-  CONFIRM: "danger",
-  DISMISS: "neutral",
-};
-
 export function ActionBadge({ action }: { action: FeedbackAction }) {
-  return (
-    <Badge variant={ACTION_VARIANT_MAP[action]}>
-      {action === "CONFIRM" ? "✓ CONFIRM (Đồng phạm)" : "✕ DISMISS (Bác bỏ)"}
+  return action === "CONFIRM" ? (
+    <Badge variant="danger">
+      <Check className="h-3 w-3" aria-hidden />
+      {ACTION_LABEL.CONFIRM}
+    </Badge>
+  ) : (
+    <Badge variant="neutral">
+      <X className="h-3 w-3" aria-hidden />
+      {ACTION_LABEL.DISMISS}
     </Badge>
   );
 }

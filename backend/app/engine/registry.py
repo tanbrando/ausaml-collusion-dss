@@ -418,7 +418,13 @@ class ModelRegistry:
         self._last_pred_cache[(case_id, model_info.model_id)] = session_map
 
         graph_payload = build_cytoscape_payload(
-            path_records, pred_items, req.include_node_types, target_ids, max_ui_nodes=300
+            path_records,
+            pred_items,
+            req.include_node_types,
+            target_ids,
+            max_ui_nodes=300,
+            sub_g=sub_g,
+            sub_id_maps=sub_id_maps,
         )
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
 

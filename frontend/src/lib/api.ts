@@ -136,3 +136,17 @@ export function getExportUrl(
 ): string {
   return `${API_BASE}/api/v1/cases/${encodeURIComponent(caseId)}/export?format=${format}&model_id=${encodeURIComponent(modelId)}`;
 }
+
+/** Kiểm tra backend còn sống (GET /health) — dùng cho chỉ báo trạng thái ở sidebar. */
+export async function fetchHealth(timeoutMs = 4000): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE}/health`, { signal: controller.signal, cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}

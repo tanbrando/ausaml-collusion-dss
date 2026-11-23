@@ -1,210 +1,261 @@
 "use client";
 
 /**
- * Cột Giữa Dưới (M3 - Việt): Bảng Xếp hạng Cặp Nghi vấn.
- * Tinh chỉnh theo review:
- * - Thống nhất 100% số chữ số thập phân `formatPercent(score, 1)` (ví dụ: 99.9% / 99.5%)
- *   khớp tuyệt đối với cột Xác suất và thanh Đối chứng bên phải.
- * - Gắn huy hiệu cảnh báo `⚡ Phát hiện ẩn` hoặc `🛡️ Lọc bẫy` cho các cặp mà
- *   CK GCN và Hybrid v4 chênh lệch lớn (>= 25%) — làm nổi bật đóng góp của đề tài.
+ * Dock bảng xếp hạng cặp nghi vấn dưới đồ thị (/workspace):
+ * - 3 chế độ: thu gọn (1 thanh), chia đôi với đồ thị, mở rộng toàn khung.
+ * - Mức rủi ro đồng bộ realtime theo ngưỡng τ; lọc theo mức rủi ro.
+ * - Bàn phím: ↑/↓ hoặc J/K để chuyển cặp, Enter để chọn.
  */
 
-import { useMemo, useState } from "react";
-import { Filter, ShieldCheck, Zap } from "lucide-react";
-import type { PredictedLinkItem, RiskLevel } from "@/types/contract";
-import { RiskBadge, StatusBadge } from "@/components/ui/Badge";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ChevronDown, ChevronUp, Maximize2, Minimize2, ShieldCheck, ListX, Zap } from "lucide-react";
+import { computeRiskLevel, type PredictedLinkItem, type RiskLevel } from "@/types/contract";
+import { RISK_DOT, RiskBadge, StatusBadge, Badge } from "@/components/ui/Badge";
+import { IconButton } from "@/components/ui/Button";
+import { FilterChip } from "@/components/ui/Tabs";
+import { EmptyState, Kbd } from "@/components/ui/Card";
+import { Table, TableContainer, THead, Th, Td, Tr } from "@/components/ui/Table";
+import { RISK_LABEL } from "@/lib/i18n/labels";
 import { formatPercent } from "@/lib/format";
+import { cn } from "@/lib/cn";
+
+export type TableDockMode = "collapsed" | "split" | "expanded";
 
 interface RankingTableProps {
   predictions: PredictedLinkItem[];
+  threshold: number;
   selectedPairId: string | null;
+  dockMode: TableDockMode;
+  onDockModeChange: (mode: TableDockMode) => void;
   onSelectPair: (item: PredictedLinkItem) => void;
 }
 
 type RiskFilter = "ALL" | RiskLevel;
 
+/** Thanh điểm nhỏ thể hiện xác suất 0–100%. */
+function ScoreBar({ score, level }: { score: number; level: RiskLevel }) {
+  return (
+    <span className="hidden h-1.5 w-12 overflow-hidden rounded-full bg-subtle 2xl:inline-block" aria-hidden>
+      <span className={cn("block h-full rounded-full", RISK_DOT[level])} style={{ width: `${Math.round(score * 100)}%` }} />
+    </span>
+  );
+}
+
 export function RankingTable({
   predictions,
+  threshold,
   selectedPairId,
+  dockMode,
+  onDockModeChange,
   onSelectPair,
 }: RankingTableProps) {
   const [riskFilter, setRiskFilter] = useState<RiskFilter>("ALL");
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
-  const sortedPredictions = useMemo(
-    () => [...predictions].sort((a, b) => b.score - a.score),
-    [predictions]
+  const ranked = useMemo(
+    () =>
+      [...predictions]
+        .sort((a, b) => b.score - a.score)
+        .map((p, i) => ({ ...p, rank: i + 1, dynamicRisk: computeRiskLevel(p.score, threshold) })),
+    [predictions, threshold]
   );
 
   const counts = useMemo(() => {
-    const c = { ALL: sortedPredictions.length, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    for (const p of sortedPredictions) {
-      c[p.risk_level] += 1;
-    }
+    const c: Record<RiskFilter, number> = { ALL: ranked.length, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    for (const p of ranked) c[p.dynamicRisk] += 1;
     return c;
-  }, [sortedPredictions]);
+  }, [ranked]);
 
-  const filteredPredictions = useMemo(() => {
-    if (riskFilter === "ALL") return sortedPredictions;
-    return sortedPredictions.filter((p) => p.risk_level === riskFilter);
-  }, [sortedPredictions, riskFilter]);
+  const filtered = useMemo(
+    () => (riskFilter === "ALL" ? ranked : ranked.filter((p) => p.dynamicRisk === riskFilter)),
+    [ranked, riskFilter]
+  );
+
+  const selected = ranked.find((p) => p.pair_id === selectedPairId);
+
+  useEffect(() => {
+    if (!selectedPairId) return;
+    rowRefs.current.get(selectedPairId)?.scrollIntoView({ block: "nearest" });
+  }, [selectedPairId, dockMode]);
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const down = e.key === "ArrowDown" || e.key === "j";
+    const up = e.key === "ArrowUp" || e.key === "k";
+    if (!down && !up) return;
+    if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+    e.preventDefault();
+    if (filtered.length === 0) return;
+    const idx = filtered.findIndex((p) => p.pair_id === selectedPairId);
+    const nextIdx = idx < 0 ? 0 : Math.min(filtered.length - 1, Math.max(0, idx + (down ? 1 : -1)));
+    const next = filtered[nextIdx];
+    onSelectPair(next);
+    rowRefs.current.get(next.pair_id)?.focus();
+  };
+
+  if (dockMode === "collapsed") {
+    return (
+      <section className="flex h-11 shrink-0 items-center justify-between gap-3 rounded-lg border border-line bg-surface pl-4 pr-1.5 shadow-sm">
+        <button
+          type="button"
+          onClick={() => onDockModeChange("split")}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          aria-label="Mở bảng xếp hạng"
+        >
+          <span className="whitespace-nowrap text-base font-semibold text-fg">Cặp nghi vấn</span>
+          <span className="num hidden items-center gap-3 text-sm text-muted sm:flex">
+            <span className="flex items-center gap-1.5">
+              <span className={cn("h-2 w-2 rounded-full", RISK_DOT.HIGH)} aria-hidden />
+              {RISK_LABEL.HIGH} {counts.HIGH}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className={cn("h-2 w-2 rounded-full", RISK_DOT.MEDIUM)} aria-hidden />
+              {RISK_LABEL.MEDIUM} {counts.MEDIUM}
+            </span>
+          </span>
+          {selected && (
+            <span className="num truncate font-mono text-sm text-primary-fg">
+              Đang chọn: {selected.source} ↔ {selected.target} · {formatPercent(selected.score, 1)}
+            </span>
+          )}
+        </button>
+        <IconButton label="Mở bảng xếp hạng" icon={ChevronUp} size="sm" onClick={() => onDockModeChange("split")} />
+      </section>
+    );
+  }
 
   return (
-    <section className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-3 shrink-0 h-[230px] flex flex-col gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div>
-          <h2 className="font-semibold text-slate-900 text-sm">
-            Danh sách Xếp hạng Cặp Nghi vấn{" "}
-            <span className="text-slate-600 font-normal num">
-              ({filteredPredictions.length}/{predictions.length})
-            </span>
+    <section
+      aria-label="Bảng xếp hạng cặp nghi vấn"
+      className={cn(
+        "flex flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-sm",
+        dockMode === "expanded" ? "min-h-0 flex-1" : "h-[260px] shrink-0"
+      )}
+    >
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line py-2 pl-4 pr-1.5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="text-base font-semibold text-fg">
+            Cặp nghi vấn <span className="num font-normal text-muted">({filtered.length}/{predictions.length})</span>
           </h2>
-          <p className="text-[11px] text-slate-600">
-            Click vào một dòng để đồng bộ đồ thị và mở hồ sơ giải thích bên phải
-          </p>
-        </div>
-
-        <div className="flex items-center gap-1 text-[11px] num">
-          <Filter className="w-3.5 h-3.5 text-slate-500 mr-0.5" />
-          {(["ALL", "HIGH", "MEDIUM", "LOW"] as RiskFilter[]).map((level) => {
-            const active = riskFilter === level;
-            return (
-              <button
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Lọc theo mức rủi ro">
+            {(["ALL", "HIGH", "MEDIUM", "LOW"] as RiskFilter[]).map((level) => (
+              <FilterChip
                 key={level}
-                type="button"
+                selected={riskFilter === level}
                 onClick={() => setRiskFilter(level)}
-                className={`px-2 py-0.5 rounded-md border transition-colors ${
-                  active
-                    ? "bg-slate-900 text-white border-slate-900 font-medium"
-                    : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-                }`}
+                count={counts[level]}
+                dotClassName={level === "ALL" ? undefined : RISK_DOT[level]}
               >
-                {level === "ALL" ? "Tất cả" : level} ({counts[level]})
-              </button>
-            );
-          })}
+                {level === "ALL" ? "Tất cả" : RISK_LABEL[level]}
+              </FilterChip>
+            ))}
+          </div>
         </div>
-      </div>
+        <div className="flex items-center gap-1">
+          <span className="mr-2 hidden items-center gap-1 text-xs text-muted 2xl:flex">
+            <Kbd>J</Kbd>
+            <Kbd>K</Kbd> chuyển cặp
+          </span>
+          <IconButton
+            label={dockMode === "expanded" ? "Thu về chế độ chia đôi" : "Mở rộng bảng"}
+            icon={dockMode === "expanded" ? Minimize2 : Maximize2}
+            size="sm"
+            onClick={() => onDockModeChange(dockMode === "expanded" ? "split" : "expanded")}
+          />
+          <IconButton label="Thu gọn bảng" icon={ChevronDown} size="sm" onClick={() => onDockModeChange("collapsed")} />
+        </div>
+      </header>
 
       {predictions.length === 0 ? (
-        <div className="py-7 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg">
-          Chưa có kết quả suy luận. Nhấn <b>Chạy Suy Luận</b> ở cột trái để xếp hạng các cặp khách hàng nghi vấn.
-        </div>
-      ) : filteredPredictions.length === 0 ? (
-        <div className="py-6 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-lg">
-          Không có cặp nào ở mức rủi ro <b>{riskFilter}</b>.
-        </div>
+        <EmptyState compact icon={ListX} title="Chưa có kết quả suy luận" description="Chạy suy luận để xếp hạng các cặp nghi vấn." />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          compact
+          icon={ListX}
+          title={`Không có cặp ở mức rủi ro “${RISK_LABEL[riskFilter as RiskLevel]}”`}
+          description={`Tại ngưỡng τ = ${threshold.toFixed(2)}.`}
+        />
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto text-xs border border-slate-200/80 rounded-lg">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50 text-slate-600 sticky top-0 z-10 border-b border-slate-200">
-              <tr>
-                <th className="py-2 px-3 font-semibold">Cặp Khách hàng</th>
-                <th className="py-2 px-2 font-semibold text-right">Xác suất</th>
-                <th className="py-2 px-2 font-semibold text-center">Mức Rủi ro</th>
-                <th
-                  className="py-2 px-2 font-semibold text-center"
-                  title="So sánh điểm dự báo (1 chữ số thập phân) giữa CK GCN thuần và Hybrid v4"
-                >
-                  CK GCN vs Hybrid v4
-                </th>
-                <th className="py-2 px-3 font-semibold text-right">Trạng thái</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 num">
-              {filteredPredictions.map((p) => {
-                const isSelected = selectedPairId === p.pair_id;
-                const gcnScore = p.model_comparison.ck_gcn_seed42;
-                const hybridScore = p.model_comparison.hybrid_v3_best;
-                // Đồng nhất 1 chữ số thập phân (formatPercent(..., 1))
-                const gcnPct = formatPercent(gcnScore, 1);
-                const hybridPct = formatPercent(hybridScore, 1);
-                const diff = hybridScore - gcnScore;
-                const isCovertDiscovery = diff >= 0.25;
-                const isTrapFiltered = diff <= -0.25;
-
-                return (
-                  <tr
-                    key={p.pair_id}
-                    onClick={() => onSelectPair(p)}
-                    className={`cursor-pointer transition-colors ${
-                      isSelected
-                        ? "bg-blue-50/90 ring-1 ring-inset ring-blue-300"
-                        : "hover:bg-slate-50"
-                    } ${p.feedback_status === "DISMISSED" ? "opacity-60" : ""}`}
-                  >
-                    <td className="py-2 px-3 font-mono text-slate-800 whitespace-nowrap">
-                      <span
-                        className={
-                          isSelected ? "font-semibold text-blue-900" : ""
-                        }
-                      >
-                        {p.source}
-                      </span>
-                      <span className="mx-1 text-slate-400">↔</span>
-                      <span
-                        className={
-                          isSelected ? "font-semibold text-blue-900" : ""
-                        }
-                      >
-                        {p.target}
-                      </span>
-                    </td>
-
-                    <td className="py-2 px-2 text-right font-mono font-semibold text-slate-900">
-                      {formatPercent(p.score, 1)}
-                    </td>
-
-                    <td className="py-2 px-2 text-center">
-                      <RiskBadge level={p.risk_level} />
-                    </td>
-
-                    <td className="py-2 px-2 text-center font-mono whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1.5">
-                        <span>
-                          <span className="text-slate-600">{gcnPct}</span>
-                          <span className="mx-1 text-slate-300">/</span>
-                          <span
-                            className={`font-semibold ${
-                              isCovertDiscovery || isTrapFiltered
-                                ? "text-blue-700"
-                                : "text-slate-800"
-                            }`}
-                          >
-                            {hybridPct}
-                          </span>
+        <TableContainer className="min-h-0 flex-1">
+          <div onKeyDown={handleKeyDown}>
+            <Table>
+              <THead>
+                <tr>
+                  <Th align="right" className="hidden w-12 2xl:table-cell">#</Th>
+                  <Th className="pl-5 2xl:pl-3">Cặp khách hàng</Th>
+                  <Th align="right">Xác suất</Th>
+                  <Th>Rủi ro</Th>
+                  <Th title="So sánh điểm dự báo giữa CK GCN thuần và Hybrid v4">GCN → Hybrid v4</Th>
+                  <Th align="right">Trạng thái</Th>
+                </tr>
+              </THead>
+              <tbody>
+                {filtered.map((p) => {
+                  const gcn = p.model_comparison.ck_gcn_seed42;
+                  const hybrid = p.model_comparison.hybrid_v3_best;
+                  const diff = hybrid - gcn;
+                  return (
+                    <Tr
+                      key={p.pair_id}
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(p.pair_id, el);
+                        else rowRefs.current.delete(p.pair_id);
+                      }}
+                      selected={selectedPairId === p.pair_id}
+                      muted={p.feedback_status === "DISMISSED"}
+                      onSelect={() => onSelectPair(p)}
+                    >
+                      <Td numeric className="hidden text-muted 2xl:table-cell">{p.rank}</Td>
+                      <Td className="whitespace-nowrap pl-5 font-mono 2xl:pl-3">
+                        {p.source} <span className="text-faint">↔</span> {p.target}
+                      </Td>
+                      <Td numeric>
+                        <span className="inline-flex items-center gap-2">
+                          <ScoreBar score={p.score} level={p.dynamicRisk} />
+                          <span className="w-12 font-medium">{formatPercent(p.score, 1)}</span>
                         </span>
-
-                        {isCovertDiscovery && (
-                          <span
-                            title={`Phát hiện đồng phạm ẩn: CK GCN thuần chỉ dự báo ${gcnPct} nhưng Hybrid v4 phát hiện ${hybridPct} nhờ đường đi bắc cầu dị thể`}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 border border-amber-300 font-sans text-[10px] font-semibold"
-                          >
-                            <Zap className="w-2.5 h-2.5 fill-current" />
-                            Ẩn
-                          </span>
-                        )}
-
-                        {isTrapFiltered && (
-                          <span
-                            title={`Lọc bẫy thành công: CK GCN báo động giả (${gcnPct}) nhưng Hybrid v4 hạ xuống ${hybridPct}`}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 font-sans text-[10px] font-semibold"
-                          >
-                            <ShieldCheck className="w-2.5 h-2.5" />
-                            Lọc bẫy
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    <td className="py-2 px-3 text-right whitespace-nowrap">
-                      <StatusBadge status={p.feedback_status} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      </Td>
+                      <Td>
+                        <RiskBadge level={p.dynamicRisk} />
+                      </Td>
+                      <Td className="whitespace-nowrap">
+                        <span className="num inline-flex items-center gap-2 font-mono">
+                          <span className="text-muted">{formatPercent(gcn, 1)}</span>
+                          <span className="text-faint" aria-hidden>→</span>
+                          <span className="font-medium">{formatPercent(hybrid, 1)}</span>
+                          {diff >= 0.25 && (
+                            <Badge
+                              variant="warning"
+                              className="font-sans"
+                              title={`CK GCN chỉ dự báo ${formatPercent(gcn, 1)} nhưng Hybrid v4 phát hiện ${formatPercent(hybrid, 1)}`}
+                            >
+                              <Zap className="h-3 w-3" aria-hidden />
+                              <span className="sr-only 2xl:not-sr-only">Đồng phạm ẩn</span>
+                            </Badge>
+                          )}
+                          {diff <= -0.25 && (
+                            <Badge
+                              variant="success"
+                              className="font-sans"
+                              title={`CK GCN báo động giả ${formatPercent(gcn, 1)}, Hybrid v4 hạ xuống ${formatPercent(hybrid, 1)}`}
+                            >
+                              <ShieldCheck className="h-3 w-3" aria-hidden />
+                              <span className="sr-only 2xl:not-sr-only">Lọc bẫy</span>
+                            </Badge>
+                          )}
+                        </span>
+                      </Td>
+                      <Td align="right" className="whitespace-nowrap">
+                        <span className="inline-flex justify-end">
+                          <StatusBadge status={p.feedback_status} />
+                        </span>
+                      </Td>
+                    </Tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          </div>
+        </TableContainer>
       )}
     </section>
   );

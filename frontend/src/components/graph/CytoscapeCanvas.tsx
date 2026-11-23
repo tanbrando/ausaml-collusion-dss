@@ -24,9 +24,13 @@ import cytoscape, {
   type StylesheetStyle,
 } from "cytoscape";
 import {
-  Maximize2,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Maximize,
+  Network,
   RefreshCw,
-  Sparkles,
+  Route,
   Tag,
   X,
   ZoomIn,
@@ -35,8 +39,11 @@ import {
 import {
   computeRiskLevel,
   NODE_VISUAL_STYLES,
+  type AttributeTone,
+  type CytoscapeEdgeData,
   type CytoscapeGraphPayload,
   type CytoscapeNodeData,
+  type EntityAttributeItem,
   type EvidencePath,
   type NodeType,
 } from "@/types/contract";
@@ -46,6 +53,12 @@ import {
 } from "@/lib/graph/filters";
 import { applyGraphLayout, type LayoutMode } from "@/lib/graph/layouts";
 import { formatPercent } from "@/lib/format";
+import { HEX, RISK_HEX } from "@/lib/theme/colors";
+import { cn } from "@/lib/cn";
+import { IconButton } from "@/components/ui/Button";
+import { SegmentedControl } from "@/components/ui/Tabs";
+import { Kbd } from "@/components/ui/Card";
+import { NodeShapeIcon } from "@/components/graph/NodeShapeIcon";
 
 interface CytoscapeCanvasProps {
   graphPayload: CytoscapeGraphPayload | null;
@@ -55,6 +68,8 @@ interface CytoscapeCanvasProps {
   selectedPairEndpoints?: { source: string; target: string } | null;
   onSelectPredictedEdge: (pairId: string) => void;
   onClearHighlight?: () => void;
+  /** Đang chạy suy luận — hiện lớp phủ tiến trình trên canvas. */
+  isLoading?: boolean;
 }
 
 /**
@@ -98,23 +113,23 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       style: {
         // Mặc định ẩn nhãn để không đè chữ; hiện khi thuộc cặp đang chọn, hover hoặc bật "Hiện nhãn"
         label: "",
-        color: "#0f172a",
-        "font-size": 11,
-        "font-weight": 600,
+        color: HEX.fg,
+        "font-size": 12,
+        "font-weight": 500,
         "text-valign": "bottom",
         "text-halign": "center",
         "text-margin-y": 4,
-        "text-background-color": "#ffffff",
+        "text-background-color": HEX.surface,
         "text-background-opacity": 0.92,
         "text-background-padding": "2px",
         "text-background-shape": "roundrectangle",
         "text-border-width": 1,
-        "text-border-color": "#cbd5e1",
+        "text-border-color": HEX.lineStrong,
         "text-border-opacity": 0.85,
         width: "mapData(deg, 0, 10, 18, 34)",
         height: "mapData(deg, 0, 10, 18, 34)",
         "border-width": 2,
-        "border-color": "#ffffff",
+        "border-color": HEX.surface,
         "overlay-padding": 4,
       },
     },
@@ -123,7 +138,7 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       selector: "node[?is_target]",
       style: {
         "border-width": 2.5,
-        "border-color": "#1e3a8a",
+        "border-color": HEX.fg,
       },
     },
     {
@@ -139,20 +154,20 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
         "curve-style": "bezier",
         width: 1,
         opacity: 0.3,
-        "line-color": "#94a3b8",
-        "target-arrow-color": "#94a3b8",
+        "line-color": HEX.faint,
+        "target-arrow-color": HEX.faint,
         "target-arrow-shape": "triangle",
         "arrow-scale": 0.65,
         label: "",
-        "font-size": 9.5,
-        color: "#1e293b",
+        "font-size": 11,
+        color: HEX.fg,
         "text-rotation": "autorotate",
-        "text-background-color": "#ffffff",
+        "text-background-color": HEX.surface,
         "text-background-opacity": 0.94,
         "text-background-padding": "2px",
         "text-background-shape": "roundrectangle",
         "text-border-width": 1,
-        "text-border-color": "#e2e8f0",
+        "text-border-color": HEX.line,
         "text-border-opacity": 0.9,
       },
     },
@@ -169,16 +184,16 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       style: {
         "line-style": "dashed",
         "line-dash-pattern": [6, 4],
-        "line-color": "#64748b",
-        "font-weight": 700,
+        "line-color": HEX.muted,
+        "font-weight": 600,
       },
     },
     {
       selector:
         'edge[edge_category = "PREDICTED_LINK"][dynamic_risk = "HIGH"]',
       style: {
-        "line-color": "#dc2626",
-        color: "#b91c1c",
+        "line-color": RISK_HEX.HIGH,
+        color: HEX.dangerDark,
         width: 2.5,
         opacity: 0.92,
       },
@@ -187,8 +202,8 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       selector:
         'edge[edge_category = "PREDICTED_LINK"][dynamic_risk = "MEDIUM"]',
       style: {
-        "line-color": "#d97706",
-        color: "#b45309",
+        "line-color": RISK_HEX.MEDIUM,
+        color: HEX.warningDark,
         width: 2,
         opacity: 0.85,
       },
@@ -197,7 +212,7 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       selector:
         'edge[edge_category = "PREDICTED_LINK"][dynamic_risk = "LOW"]',
       style: {
-        "line-color": "#94a3b8",
+        "line-color": HEX.faint,
         width: 1.2,
         opacity: 0.25,
       },
@@ -206,11 +221,11 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       selector: 'edge[edge_category = "CONFIRMED_LINK"]',
       style: {
         "line-style": "solid",
-        "line-color": "#b91c1c",
-        color: "#991b1b",
+        "line-color": HEX.dangerDark,
+        color: HEX.dangerDark,
         width: 3.5,
         opacity: 1,
-        "font-weight": 700,
+        "font-weight": 600,
       },
     },
     {
@@ -224,7 +239,7 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       style: {
         opacity: 1,
         "border-width": 3.5,
-        "border-color": "#f59e0b",
+        "border-color": HEX.primary,
         "z-index": 999,
       },
     },
@@ -233,10 +248,10 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
       style: {
         opacity: 1,
         width: 3.4,
-        "line-color": "#2563eb",
-        "target-arrow-color": "#2563eb",
-        color: "#1e40af",
-        "font-weight": 700,
+        "line-color": HEX.primary,
+        "target-arrow-color": HEX.primary,
+        color: HEX.primaryDark,
+        "font-weight": 600,
         label: "data(relation_or_score)",
         // (i) Nhãn cạnh được highlight nằm ngang (không autorotate) để khỏi bị chữ dọc chồng nhau
         "text-rotation": "none",
@@ -246,16 +261,16 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
     {
       selector: 'edge[edge_category = "CONFIRMED_LINK"].highlighted-edge',
       style: {
-        "line-color": "#991b1b",
-        color: "#991b1b",
+        "line-color": HEX.dangerDark,
+        color: HEX.dangerDark,
         width: 4.2,
       },
     },
     {
       selector: 'edge[edge_category = "PREDICTED_LINK"].highlighted-edge',
       style: {
-        "line-color": "#dc2626",
-        color: "#b91c1c",
+        "line-color": RISK_HEX.HIGH,
+        color: HEX.dangerDark,
         width: 3.6,
       },
     },
@@ -271,6 +286,14 @@ function buildCytoscapeStyles(): StylesheetStyle[] {
   ];
 }
 
+const TONE_VALUE_STYLES: Record<AttributeTone, string> = {
+  neutral: "text-fg-secondary",
+  info: "text-primary-fg font-medium",
+  warning: "text-warning-fg font-medium",
+  danger: "text-danger-fg font-semibold",
+  success: "text-success-fg font-medium",
+};
+
 export function CytoscapeCanvas({
   graphPayload,
   threshold,
@@ -279,6 +302,7 @@ export function CytoscapeCanvas({
   selectedPairEndpoints = null,
   onSelectPredictedEdge,
   onClearHighlight,
+  isLoading = false,
 }: CytoscapeCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -290,8 +314,12 @@ export function CytoscapeCanvas({
 
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("cose");
   const [showAllLabels, setShowAllLabels] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
   const [visibleCounts, setVisibleCounts] = useState({ nodes: 0, edges: 0 });
   const [inspectedNode, setInspectedNode] = useState<CytoscapeNodeData | null>(
+    null
+  );
+  const [inspectedEdge, setInspectedEdge] = useState<CytoscapeEdgeData | null>(
     null
   );
 
@@ -330,9 +358,9 @@ export function CytoscapeCanvas({
       let displayLabel = "";
       if (e.data.edge_category === "CONFIRMED_LINK") {
         displayLabel =
-          score !== null ? `✓ ${formatPercent(score, 1)}` : "✓ CONFIRMED";
+          score !== null ? `✓ ${formatPercent(score, 1)}` : "✓ Đã xác nhận";
       } else if (e.data.edge_category === "PREDICTED_LINK") {
-        displayLabel = score !== null ? formatPercent(score, 1) : "PRED";
+        displayLabel = score !== null ? formatPercent(score, 1) : "Dự báo";
       }
 
       return {
@@ -357,6 +385,7 @@ export function CytoscapeCanvas({
       }
       setVisibleCounts({ nodes: 0, edges: 0 });
       setInspectedNode(null);
+      setInspectedEdge(null);
       return;
     }
 
@@ -389,26 +418,48 @@ export function CytoscapeCanvas({
     });
 
     cy.on("tap", "edge", (evt) => {
-      const pairId = evt.target.data("pair_id") as string | null;
+      const e = evt.target;
+      const pairId = e.data("pair_id") as string | null;
       if (pairId) {
+        setInspectedNode(null);
+        setInspectedEdge(null);
         onSelectEdgeRef.current(pairId);
+        return;
       }
+      setInspectedNode(null);
+      setInspectedEdge({
+        id: e.id(),
+        source: e.source().id(),
+        target: e.target().id(),
+        relation: e.data("relation") ?? "",
+        edge_category: e.data("edge_category") ?? "OBSERVED_EDGE",
+        score: e.data("score") ?? null,
+        risk_level: e.data("risk_level") ?? null,
+        pair_id: null,
+        feedback_status: null,
+        detail_label: e.data("detail_label") ?? null,
+        attributes: (e.data("attributes") as EntityAttributeItem[] | undefined) ?? [],
+      });
     });
 
     cy.on("tap", "node", (evt) => {
       const n = evt.target;
+      setInspectedEdge(null);
       setInspectedNode({
         id: n.id(),
         label: n.data("label"),
         node_type: n.data("node_type"),
         risk_score: n.data("risk_score") ?? null,
         is_target: Boolean(n.data("is_target")),
+        subtitle: (n.data("subtitle") as string | null | undefined) ?? null,
+        attributes: (n.data("attributes") as EntityAttributeItem[] | undefined) ?? [],
       });
     });
 
     cy.on("tap", (evt) => {
       if (evt.target === cy) {
         setInspectedNode(null);
+        setInspectedEdge(null);
         onClearHighlightRef.current?.();
       }
     });
@@ -652,188 +703,281 @@ export function CytoscapeCanvas({
     }
   };
 
-  return (
-    <section className="bg-white rounded-xl border border-slate-200/90 shadow-sm p-3.5 flex-1 min-h-[260px] flex flex-col justify-between gap-2">
-      {/* Header + Layout & Zoom Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div>
-          <h2 className="font-semibold text-slate-900 text-sm">
-            Đồ thị Dị thể & Liên kết Đồng phạm
-          </h2>
-          <p className="text-[11px] text-slate-600 num">
-            {graphPayload
-              ? `Đang hiện ${visibleCounts.nodes} đỉnh có liên kết · ${visibleCounts.edges} cạnh (τ=${threshold.toFixed(2)}) — Di chuột vào đỉnh/cạnh để xem nhãn`
-              : "Chọn Vụ án & Mô hình ở cột trái rồi nhấn Chạy Suy Luận"}
-          </p>
-        </div>
+  const hasFocus = Boolean(highlightedPath || selectedPairEndpoints);
+  const overlayCard = "pointer-events-auto rounded-lg border border-line bg-surface/95 shadow-sm backdrop-blur";
 
-        {graphPayload && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-50 text-[11px]">
-              {(
-                [
-                  { id: "cose", label: "Cụm (COSE)" },
-                  { id: "concentric", label: "Đồng tâm" },
-                  { id: "breadthfirst", label: "Phân tầng AML" },
-                ] as Array<{ id: LayoutMode; label: string }>
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => handleChangeLayout(opt.id)}
-                  className={`px-2 py-0.5 rounded-md transition-colors ${
-                    layoutMode === opt.id
-                      ? "bg-white text-slate-900 shadow-sm font-semibold"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
+  return (
+    <section
+      aria-label="Đồ thị mạng lưới dị thể"
+      className="relative flex min-h-[280px] flex-1 overflow-hidden rounded-lg border border-line bg-dot-grid"
+    >
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {/* Trạng thái rỗng / đang tải */}
+      {!graphPayload && !isLoading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface text-muted shadow-sm">
+            <Network className="h-5 w-5" aria-hidden />
+          </span>
+          <div>
+            <p className="text-base font-medium text-fg">Chưa có dữ liệu đồ thị</p>
+            <p className="mt-1 text-sm text-muted">Chọn vụ án và chạy suy luận để dựng mạng lưới.</p>
+          </div>
+        </div>
+      )}
+      {isLoading && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-surface/50 backdrop-blur-[1px]">
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-base text-fg-secondary shadow-md"
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
+            Đang chạy suy luận GNN…
+          </div>
+        </div>
+      )}
+
+      {graphPayload && (
+        <>
+          {/* Góc trên-trái: bố cục + nhãn + thông tin đỉnh */}
+          <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col items-start gap-2">
+            <div className={cn(overlayCard, "flex items-center gap-1 p-1")}>
+              <SegmentedControl<LayoutMode>
+                ariaLabel="Bố cục đồ thị"
+                value={layoutMode}
+                onChange={handleChangeLayout}
+                options={[
+                  { value: "cose", label: "Cụm" },
+                  { value: "concentric", label: "Đồng tâm" },
+                  { value: "breadthfirst", label: "Phân tầng" },
+                ]}
+                className="border-0 bg-transparent p-0"
+              />
+              <span className="mx-0.5 h-5 w-px bg-line" aria-hidden />
+              <IconButton
+                label={showAllLabels ? "Ẩn nhãn đỉnh" : "Hiện nhãn mọi đỉnh"}
+                icon={Tag}
+                size="sm"
+                active={showAllLabels}
+                tooltipSide="bottom"
+                onClick={() => setShowAllLabels((v) => !v)}
+              />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setShowAllLabels((v) => !v)}
-              title="Bật/tắt hiển thị toàn bộ tên đỉnh"
-              className={`px-2 py-1 rounded-lg border text-[11px] font-medium inline-flex items-center gap-1 transition-colors ${
-                showAllLabels
-                  ? "bg-slate-900 text-white border-slate-900"
-                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-              }`}
-            >
-              <Tag className="w-3 h-3" />
-              <span>Nhãn</span>
-            </button>
+            {inspectedNode && (
+              <div className={cn(overlayCard, "w-72 sm:w-80 overflow-hidden text-xs")}>
+                <div className="flex items-start justify-between gap-2 border-b border-line px-3 py-2">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <span className="mt-0.5 shrink-0">
+                      <NodeShapeIcon type={inspectedNode.node_type} size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="truncate font-mono text-sm font-semibold text-fg">
+                          {inspectedNode.label}
+                        </span>
+                        <span className="rounded bg-canvas px-1.5 py-0.5 text-[10px] font-medium text-fg-secondary border border-line">
+                          {NODE_VISUAL_STYLES[inspectedNode.node_type]?.labelVi ??
+                            inspectedNode.node_type}
+                        </span>
+                      </div>
+                      {inspectedNode.subtitle && (
+                        <div className="mt-0.5 truncate text-[11px] text-muted">
+                          {inspectedNode.subtitle}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <IconButton
+                    label="Đóng thông tin đỉnh"
+                    icon={X}
+                    size="sm"
+                    onClick={() => setInspectedNode(null)}
+                  />
+                </div>
 
-            <button
-              type="button"
-              onClick={() => handleZoom(1.2)}
-              title="Phóng to"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => handleZoom(0.8)}
-              title="Thu nhỏ"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={handleFit}
-              title="Vừa khung nhìn"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
+                <div className="max-h-56 space-y-1.5 overflow-y-auto px-3 py-2.5 num">
+                  {inspectedNode.risk_score !== null && (
+                    <div className="mb-1 flex items-center justify-between gap-2 border-b border-line pb-1.5 text-[11px]">
+                      <span className="text-muted">Xác suất đồng phạm cao nhất</span>
+                      <span className="font-mono font-semibold text-danger-fg">
+                        {formatPercent(inspectedNode.risk_score, 1)}
+                      </span>
+                    </div>
+                  )}
+
+                  {inspectedNode.attributes && inspectedNode.attributes.length > 0 ? (
+                    <dl className="space-y-1.5 text-[11px]">
+                      {inspectedNode.attributes.map((attr, idx) => (
+                        <div
+                          key={`${inspectedNode.id}-attr-${idx}`}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <dt className="shrink-0 text-muted">{attr.label}</dt>
+                          <dd
+                            className={cn(
+                              "truncate text-right",
+                              TONE_VALUE_STYLES[attr.tone ?? "neutral"]
+                            )}
+                            title={attr.value}
+                          >
+                            {attr.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : (
+                    <div className="text-[11px] text-muted">
+                      Không có thêm thuộc tính chi tiết cho thực thể này.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {inspectedEdge && (
+              <div className={cn(overlayCard, "w-72 sm:w-80 overflow-hidden text-xs")}>
+                <div className="flex items-start justify-between gap-2 border-b border-line px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-muted">
+                      Chi tiết Quan hệ Quan sát
+                    </div>
+                    <div className="mt-0.5 truncate font-mono text-xs font-semibold text-fg">
+                      {inspectedEdge.source} → {inspectedEdge.target}
+                    </div>
+                    {inspectedEdge.detail_label && (
+                      <div className="mt-0.5 truncate text-[11px] font-medium text-primary-fg">
+                        {inspectedEdge.detail_label}
+                      </div>
+                    )}
+                  </div>
+                  <IconButton
+                    label="Đóng thông tin cạnh"
+                    icon={X}
+                    size="sm"
+                    onClick={() => setInspectedEdge(null)}
+                  />
+                </div>
+
+                <div className="space-y-1.5 px-3 py-2.5 text-[11px] num">
+                  {inspectedEdge.attributes && inspectedEdge.attributes.length > 0 ? (
+                    <dl className="space-y-1.5">
+                      {inspectedEdge.attributes.map((attr, idx) => (
+                        <div
+                          key={`${inspectedEdge.id}-eattr-${idx}`}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <dt className="shrink-0 text-muted">{attr.label}</dt>
+                          <dd
+                            className={cn(
+                              "truncate text-right",
+                              TONE_VALUE_STYLES[attr.tone ?? "neutral"]
+                            )}
+                            title={attr.value}
+                          >
+                            {attr.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : (
+                    <div className="text-fg-secondary">
+                      Quan hệ: <span className="font-mono font-medium">{inspectedEdge.relation}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Góc trên-phải: điều khiển khung nhìn */}
+          <div className={cn(overlayCard, "absolute right-3 top-3 z-10 flex flex-col p-1")}>
+            <IconButton label="Phóng to" icon={ZoomIn} size="sm" tooltipSide="left" onClick={() => handleZoom(1.2)} />
+            <IconButton label="Thu nhỏ" icon={ZoomOut} size="sm" tooltipSide="left" onClick={() => handleZoom(0.8)} />
+            <IconButton label="Vừa khung nhìn" icon={Maximize} size="sm" tooltipSide="left" onClick={handleFit} />
+            <span className="mx-1.5 my-0.5 h-px bg-line" aria-hidden />
+            <IconButton
+              label="Sắp xếp lại bố cục"
+              icon={RefreshCw}
+              size="sm"
+              tooltipSide="left"
               onClick={() => runLayout(layoutMode)}
-              title="Sắp xếp lại bố cục"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+            />
+          </div>
 
-            {(highlightedPath || selectedPairEndpoints) && onClearHighlight && (
+          {/* Trên-giữa: thoát chế độ tập trung */}
+          {hasFocus && onClearHighlight && (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-10 hidden justify-center 2xl:flex">
               <button
                 type="button"
                 onClick={onClearHighlight}
-                title="Phím tắt: Esc"
-                className="px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-[11px] font-semibold hover:bg-amber-100"
+                className={cn(
+                  overlayCard,
+                  "inline-flex h-8 items-center gap-2 px-3 text-sm font-medium text-fg-secondary hover:text-fg"
+                )}
               >
-                Xem toàn cảnh (Esc)
+                Xem toàn cảnh <Kbd>Esc</Kbd>
               </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Canvas co giãn lấp đầy chiều cao cột giữa */}
-      <div className="relative flex-1 min-h-[220px] rounded-xl border border-slate-200 bg-dot-grid overflow-hidden">
-        {!graphPayload && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-xs text-slate-500 text-center px-4 gap-1">
-            <span className="font-semibold text-slate-700">
-              Không gian Đồ thị Điều tra Rửa tiền
-            </span>
-            <span>
-              Nhấn <b>Chạy Suy Luận</b> để hiển thị các thực thể (Khách hàng, Tài khoản, Thiết bị, IP) và các liên kết đồng phạm ẩn.
-            </span>
-          </div>
-        )}
-
-        <div ref={containerRef} className="w-full h-full" />
-
-        {/* Floating Node Inspector Pill khi click vào 1 đỉnh */}
-        {inspectedNode && (
-          <div className="absolute top-2.5 left-2.5 z-20 bg-white/95 backdrop-blur border border-slate-200 shadow-md rounded-lg px-3 py-2 text-xs flex items-center gap-2.5">
-            <span
-              className="w-3 h-3 rounded-full shrink-0"
-              style={{
-                backgroundColor:
-                  NODE_VISUAL_STYLES[inspectedNode.node_type]?.color ??
-                  "#2563eb",
-              }}
-            />
-            <div>
-              <div className="font-mono font-semibold text-slate-900 flex items-center gap-1.5">
-                <span>{inspectedNode.label}</span>
-                <span className="text-[10px] font-sans font-medium px-1.5 py-0.2 rounded bg-slate-100 text-slate-700">
-                  {NODE_VISUAL_STYLES[inspectedNode.node_type]?.labelVi ??
-                    inspectedNode.node_type}
-                </span>
-              </div>
-              {inspectedNode.risk_score !== null && (
-                <div className="text-[11px] text-slate-600 num">
-                  Điểm rủi ro nút: {formatPercent(inspectedNode.risk_score, 1)}
-                </div>
-              )}
             </div>
+          )}
+
+          {/* Góc dưới-trái: chú giải */}
+          <div className={cn(overlayCard, "absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] text-xs")}>
             <button
               type="button"
-              onClick={() => setInspectedNode(null)}
-              className="text-slate-400 hover:text-slate-600 ml-1"
+              onClick={() => setLegendOpen((v) => !v)}
+              aria-expanded={legendOpen}
+              className="flex w-full items-center justify-between gap-6 rounded-lg px-3 py-2 font-medium text-fg-secondary"
             >
-              <X className="w-3.5 h-3.5" />
+              Chú giải
+              {legendOpen ? (
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              )}
             </button>
+            {legendOpen && (
+              <div className="space-y-2 border-t border-line px-3 pb-2.5 pt-2 text-fg-secondary">
+                <ul className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                  <li className="flex items-center gap-2">
+                    <span className="h-px w-5 bg-faint" aria-hidden /> Cạnh quan sát
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-5 border-t-2 border-dashed border-risk-high" aria-hidden /> Dự báo · cao
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="w-5 border-t-2 border-dashed border-risk-medium" aria-hidden /> Dự báo · trung bình
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="h-1 w-5 rounded-full bg-danger-fg" aria-hidden /> Đã xác nhận
+                  </li>
+                </ul>
+                <ul className="grid grid-cols-3 gap-x-4 gap-y-1.5 border-t border-line pt-2">
+                  {(Object.keys(NODE_VISUAL_STYLES) as NodeType[]).map((nt) => (
+                    <li key={nt} className="flex items-center gap-1.5 whitespace-nowrap">
+                      <NodeShapeIcon type={nt} size={12} muted={!includeNodeTypes.includes(nt)} />
+                      {NODE_VISUAL_STYLES[nt].labelVi}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* Footer Legend + Active Bridge Path */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 shrink-0">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 h-0.5 bg-slate-300 inline-block" />
-            Quan sát (Mờ)
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 border-t-2 border-dashed border-red-600 inline-block" />
-            Dự báo HIGH
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 border-t-2 border-dashed border-amber-600 inline-block" />
-            Dự báo MEDIUM
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 h-1 bg-red-700 inline-block rounded-full" />
-            Đã xác nhận (✓)
-          </span>
-        </div>
-
-        {highlightedPath && (
-          <div className="inline-flex items-center gap-1 text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md font-mono text-[10px] max-w-full truncate">
-            <Sparkles className="w-3 h-3 shrink-0" />
-            <span className="truncate">
-              {highlightedPath.nodes.join(" → ")}
-            </span>
+          {/* Góc dưới-phải: số liệu + đường bắc cầu đang làm sáng */}
+          <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex max-w-[45%] flex-col items-end gap-2">
+            {highlightedPath && (
+              <div className={cn(overlayCard, "flex max-w-full items-center gap-2 px-3 py-1.5 text-xs text-primary-fg")}>
+                <Route className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate font-mono">{highlightedPath.nodes.join(" → ")}</span>
+              </div>
+            )}
+            <div className={cn(overlayCard, "num px-3 py-1.5 text-xs text-muted")}>
+              {visibleCounts.nodes} đỉnh · {visibleCounts.edges} cạnh
+            </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </section>
   );
 }

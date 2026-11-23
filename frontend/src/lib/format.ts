@@ -11,28 +11,23 @@ export function formatPercent(score: number, digits = 1): string {
  * Backend SQLite/Python đôi khi trả chuỗi ISO UTC không có hậu tố 'Z' (vd: "2026-11-22T15:06:38").
  * Hàm này tự chuẩn hóa về UTC ('Z') rồi format thống nhất theo múi giờ Asia/Ho_Chi_Minh (UTC+7).
  */
+export function parseServerDate(ts: string): Date | null {
+  if (!ts) return null;
+  const trimmed = ts.trim();
+  const hasTimezone = /[zZ]$/.test(trimmed) || /[+-]\d{2}:?\d{2}$/.test(trimmed);
+  const date = new Date(hasTimezone ? trimmed : `${trimmed.replace(" ", "T")}Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function formatDateVi(ts: string): string {
   if (!ts) return "—";
-  try {
-    const trimmed = ts.trim();
-    const hasTimezone =
-      trimmed.endsWith("Z") ||
-      trimmed.endsWith("z") ||
-      /[+-]\d{2}:?\d{2}$/.test(trimmed);
-    const normalizedIso = hasTimezone
-      ? trimmed
-      : `${trimmed.replace(" ", "T")}Z`;
-    const date = new Date(normalizedIso);
-    if (Number.isNaN(date.getTime())) return ts;
-
-    return new Intl.DateTimeFormat("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      dateStyle: "short",
-      timeStyle: "medium",
-    }).format(date);
-  } catch {
-    return ts;
-  }
+  const date = parseServerDate(ts);
+  if (!date) return ts;
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(date);
 }
 
 /**
@@ -46,26 +41,9 @@ export function shortCaseTitle(title: string, maxLen = 44): string {
   return `${lastSpace > 20 ? sliced.slice(0, lastSpace) : sliced}…`;
 }
 
-const SHORT_MODEL_LABELS: Record<string, string> = {
-  hybrid_v4_full: "Hybrid v4",
-  hetero_gat_v4: "HeteroGAT v4",
-  hetero_sage_v4: "HeteroSAGE v4",
-  ck_gcn_seed42: "CK GCN",
-  ck_gat_seed42: "CK GAT",
-};
+// Nhãn mô hình & chú giải chỉ số đã chuyển sang glossary dùng chung (quy tắc A7).
+export { METRIC_TOOLTIPS, shortModelLabel } from "@/lib/i18n/labels";
 
-export function shortModelLabel(modelId: string, displayName: string): string {
-  return SHORT_MODEL_LABELS[modelId] ?? displayName.slice(0, 18);
+export function formatNumber(value: number): string {
+  return value.toLocaleString("vi-VN");
 }
-
-export const METRIC_TOOLTIPS: Record<string, string> = {
-  tau: "Ngưỡng quyết định tối ưu (τ_val) được chọn trên tập Validation theo F1-score.",
-  roc_auc:
-    "ROC-AUC: Diện tích dưới đường cong ROC — đo khả năng phân biệt cặp đồng phạm và cặp bình thường ở mọi ngưỡng.",
-  ap: "AP (Average Precision / PR-AUC): Độ chính xác trung bình trên đường cong Precision-Recall, đặc biệt quan trọng khi dữ liệu mất cân bằng.",
-  f1: "F1-Score: Trung bình điều hòa giữa Precision và Recall tại ngưỡng τ_val.",
-  hits_at_10:
-    "Hits@10: Tỷ lệ liên kết đồng phạm thật lọt vào Top-10 ứng viên có điểm cao nhất (đánh giá khả năng xếp hạng).",
-  fpr_at_tau:
-    "FPR@τ (False Positive Rate): Tỷ lệ báo động giả tại ngưỡng τ_val (càng thấp càng tốt, đặc biệt trên ca bẫy Type 1 & Type 4).",
-};
